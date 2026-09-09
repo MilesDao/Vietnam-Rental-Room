@@ -1,0 +1,38 @@
+sources:
+  phongtro123:
+    enabled: true
+    tier: 1
+    base_url: "https://phongtro123.com"
+    cities:
+      hanoi:
+        name: "Hà Nội"
+        start_url: "https://phongtro123.com/tinh-thanh/ha-noi"
+        page_pattern: "https://phongtro123.com/tinh-thanh/ha-noi?page={page}"
+      hcm:
+        name: "TP. Hồ Chí Minh"
+        start_url: "https://phongtro123.com/tinh-thanh/ho-chi-minh"
+        page_pattern: "https://phongtro123.com/tinh-thanh/ho-chi-minh?page={page}"
+    rate_limit:
+      min_delay_sec: 1.0
+      max_delay_sec: 2.0
+      max_concurrency: 2
+    max_images_per_listing: 8
+
+  alonhadat:
+    enabled: true
+    tier: 1
+    base_url: "https://alonhadat.com.vn"
+    cities:
+      hanoi:
+        name: "Hà Nội"
+        start_url: "https://alonhadat.com.vn/cho-thue-phong-tro-nha-tro/ha-noi"
+        page_pattern: "https://alonhadat.com.vn/cho-thue-phong-tro-nha-tro/ha-noi/trang--{page}.html"
+      hcm:
+        name: "TP. Hồ Chí Minh"
+        start_url: "https://alonhadat.com.vn/cho-thue-phong-tro-nha-tro/ho-chi-minh"
+        page_pattern: "https://alonhadat.com.vn/cho-thue-phong-tro-nha-tro/ho-chi-minh/trang--{page}.html"
+    rate_limit:
+      min_delay_sec: 1.0
+      max_delay_sec: 2.0
+      max_concurrency: 2
+    max_images_per_listing: 8
