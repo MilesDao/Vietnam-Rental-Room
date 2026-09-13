@@ -32,8 +32,8 @@ class PoliteFetcher:
 
     def __init__(
         self,
-        min_delay: float = 1.0,
-        max_delay: float = 2.5,
+        min_delay: float = 0.3,
+        max_delay: float = 0.8,
         timeout: float = 20.0,
     ):
         self.min_delay = min_delay

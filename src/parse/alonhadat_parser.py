@@ -20,55 +20,64 @@ def parse_alonhadat_detail(html_content: str, url: str) -> Dict[str, Any]:
     except Exception:
         soup = BeautifulSoup(html_content, "html.parser")
 
-    # Native ID from URL (e.g. ...-19056845.html)
-    native_id_match = re.search(r"-(\d+)\.html", url)
+    # Native ID from URL (e.g. ...-19056845.html or /19056845.html)
+    native_id_match = re.search(r"-(\d+)\.html?", url)
+    if not native_id_match:
+        native_id_match = re.search(r"(\d+)\.html?", url)
+    if not native_id_match:
+        native_id_match = re.search(r"(\d+)", url)
     native_id = native_id_match.group(1) if native_id_match else "unknown"
 
     # Title
     h1 = soup.find("h1")
     title = h1.get_text(strip=True) if h1 else ""
 
-    # Price & Area
-    price_elem = soup.select_one(".moreinfor .price .value, .price .value, .detail .price, .property-price, .price")
-    price_raw = price_elem.get_text(strip=True) if price_elem else ""
-    price_vnd, is_negotiable = parse_price(price_raw)
+    # Price extraction (Priority: Schema.org microdata inside section.more-info)
+    price = None
 
-    area_elem = soup.select_one(".moreinfor .square .value, .square .value, .detail .square, .property-area, .square, .acreage")
-    area_raw = area_elem.get_text(strip=True) if area_elem else ""
-    area_m2 = parse_area(area_raw)
+    price_data = soup.select_one("section.more-info data[itemprop='price'], data[itemprop='price']")
+    if price_data and price_data.get("value"):
+        try:
+            price = round(float(price_data["value"]))
+        except (ValueError, TypeError):
+            pass
 
-    # Fallback search for price & area
-    if price_vnd is None and not is_negotiable:
-        for tag in soup.find_all(["div", "span", "p", "td"]):
-            t = tag.get_text(" ", strip=True)
-            if any(k in t for k in ["Giá:", "Mức giá:"]) and len(t) < 100:
-                p, neg = parse_price(t)
-                if p or neg:
-                    price_vnd, is_negotiable = p, neg
-                    break
+    if price is None:
+        price_elem = soup.select_one("section.more-info .price, .more-info span.price")
+        if price_elem:
+            price = parse_price(price_elem.get_text(strip=True))
+
+    if price is None:
+        # Fallback: scan description or title for price
+        price = parse_price(title)
+
+    # Area extraction (Priority: Schema.org microdata inside section.more-info)
+    area_m2 = None
+    area_data = soup.select_one("section.more-info span[itemprop='value'], section.more-info .area [itemprop='value']")
+    if area_data:
+        try:
+            area_m2 = round(float(area_data.get_text(strip=True).replace(",", ".")), 2)
+        except (ValueError, TypeError):
+            pass
 
     if area_m2 is None:
-        for tag in soup.find_all(["div", "span", "p", "td"]):
-            t = tag.get_text(" ", strip=True)
-            if any(k in t for k in ["Diện tích:", "DT:"]) and len(t) < 100:
-                a = parse_area(t)
-                if a:
-                    area_m2 = a
-                    break
+        area_elem = soup.select_one("section.more-info .area, .more-info span.area")
+        if area_elem:
+            area_m2 = parse_area(area_elem.get_text(strip=True))
 
-    # Address
+    if area_m2 is None:
+        # Fallback: scan title for area (e.g. 25m2, 30m2)
+        area_m2 = parse_area(title)
+
+    # Address (Current real address container)
     address_raw = ""
-    addr_elem = soup.select_one(".address .value, .property .address, .property-address, .address")
+    addr_elem = soup.select_one("address.current-address, .address-label + address, address")
     if addr_elem:
-        address_raw = addr_elem.get_text(strip=True)
+        address_raw = addr_elem.get_text(" ", strip=True)
     if not address_raw:
-        for tag in soup.find_all(["div", "p", "span", "td"]):
-            t = tag.get_text(" ", strip=True)
-            if "Địa chỉ:" in t and len(t) < 250:
-                m = re.search(r"Địa chỉ:\s*(.+)", t)
-                if m:
-                    address_raw = m.group(1).strip()
-                    break
+        old_addr = soup.select_one("p.old-address")
+        if old_addr:
+            address_raw = old_addr.get_text(" ", strip=True)
 
     # Description (real content inside section.detail.text-content)
     description = ""
@@ -81,54 +90,49 @@ def parse_alonhadat_detail(html_content: str, url: str) -> Dict[str, Any]:
             description = desc_elem.get_text("\n", strip=True)
 
     # Posted date
-    date_elem = soup.select_one(".moreinfor .date .value, .date .value, .property-date, .date")
-    posted_at_raw = date_elem.get_text(strip=True) if date_elem else ""
+    time_elem = soup.select_one("header.title time.date, header.title time, time.date")
+    posted_at_raw = time_elem.get_text(strip=True) if time_elem else ""
 
-    # Image URLs (up to 8 images)
+    # Image URLs (up to 8 images, avoiding default avatars / logos)
     images: List[str] = []
     for img in soup.select("img.limage, img[src*='/files/properties/']"):
         src = img.get("src") or img.get("data-src")
-        if src and "thumbnails" not in str(src):
+        if src and "thumbnails" not in str(src) and not any(skip in str(src) for skip in ["logo", "icon", "banner", "check", "gotop"]):
             if str(src).startswith("/"):
                 src = "https://alonhadat.com.vn" + str(src)
-            if src not in images and not any(logo in str(src) for logo in ["logo", "icon", "banner", "check", "gotop"]):
+            if src not in images:
                 images.append(str(src))
                 if len(images) >= 8:
                     break
 
-    # Phone Hash
-    phone_raw = ""
+    # Phone Hash (Salted Hash)
+    phone_number = ""
     for a in soup.find_all("a", href=True):
         if a["href"].startswith("tel:"):
-            phone_raw = a["href"].replace("tel:", "").strip()
+            phone_number = a["href"].replace("tel:", "").strip()
             break
-    if not phone_raw:
-        for elem in soup.find_all(["span", "div", "a", "td"]):
+    if not phone_number:
+        for elem in soup.find_all(["span", "div", "a", "td", "p"]):
             t = elem.get_text(strip=True)
             match = re.search(r"(0\d{9,10})", t)
             if match:
-                phone_raw = match.group(1)
+                phone_number = match.group(1)
                 break
 
-    phone_hash = ""
-    if phone_raw:
-        phone_clean = re.sub(r"\D", "", phone_raw)
-        if phone_clean:
-            phone_hash = hashlib.sha256((phone_clean + PROJECT_SALT).encode("utf-8")).hexdigest()
-
-    return {
+    rec = {
         "listing_id": f"alonhadat_{native_id}",
         "source": "alonhadat",
         "url": url,
         "title": title,
         "description": description,
-        "price_vnd_month": price_vnd,
-        "price_is_negotiable": is_negotiable,
+        "price_vnd": price,
         "area_m2": area_m2,
         "address_raw": address_raw,
         "room_type": "phòng trọ",
         "posted_at_raw": posted_at_raw,
-        "phone_hash": phone_hash,
+        "phone_number": phone_number,
         "image_urls": images,
         "n_images": len(images),
     }
+    from src.parse.normalizer import enrich_record
+    return enrich_record(rec)

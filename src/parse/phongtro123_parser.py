@@ -12,23 +12,29 @@ from bs4 import BeautifulSoup
 PROJECT_SALT = "VN_RENTAL_ROOM_2026_SECRET_SALT"
 
 
-def parse_price(price_text: str) -> Tuple[Optional[float], bool]:
+def parse_price(price_text: str) -> Any:
     """
-    Parse Vietnamese price string to float (VND/month) and negotiable flag.
+    Parse Vietnamese price string to float (VND/month) or negotiable text.
     Examples:
-        - "3.5 triệu/tháng", "3,5 tr", "3tr5", "3 triệu 5" -> (3500000.0, False)
-        - "800 nghìn/tháng", "800k" -> (800000.0, False)
-        - "Thỏa thuận", "Liên hệ" -> (None, True)
+        - "3.5 triệu/tháng", "3,5 tr", "3tr5", "3 triệu 5" -> 3500000.0
+        - "800 nghìn/tháng", "800k" -> 800000.0
+        - "Thỏa thuận", "Liên hệ", "Giá thương lượng" -> "Thỏa thuận" / "Liên hệ" / "Thương lượng"
     """
     if not price_text:
-        return None, False
+        return None
 
-    text = price_text.lower().strip()
-    if any(w in text for w in ["thỏa thuận", "thoa thuan", "liên hệ", "lien he", "tl"]):
-        return None, True
+    text = price_text.strip()
+    text_lower = text.lower()
+
+    if any(w in text_lower for w in ["thỏa thuận", "thoa thuan"]):
+        return "Thỏa thuận"
+    if any(w in text_lower for w in ["thương lượng", "thuong luong", "tl"]):
+        return "Thương lượng"
+    if any(w in text_lower for w in ["liên hệ", "lien he"]):
+        return "Liên hệ"
 
     # Pattern: "3tr5", "3 triệu 5", "3tr500", "3 tr 5"
-    split_trieu = re.search(r"(\d+)\s*(?:triệu|trieu|tr|t)\s*(\d+)", text)
+    split_trieu = re.search(r"(\d+)\s*(?:triệu|trieu|tr|t)\s*(\d+)", text_lower)
     if split_trieu:
         main_val = float(split_trieu.group(1))
         sub_str = split_trieu.group(2)
@@ -38,36 +44,48 @@ def parse_price(price_text: str) -> Tuple[Optional[float], bool]:
             sub_val = float(sub_str) / 100.0
         else:
             sub_val = float(sub_str) / 1000.0
-        return (main_val + sub_val) * 1_000_000, False
+        return round((main_val + sub_val) * 1_000_000)
 
-    # Pattern: 3.5 triệu, 3,5 tr, 3 triệu
-    trieu_match = re.search(r"([\d\.,]+)\s*(?:triệu|trieu|tr)", text)
+    # Pattern: 3.5 triệu, 3,5 tr, 3 triệu, 4.1 triệu
+    trieu_match = re.search(r"([\d\.,]+)\s*(?:triệu|trieu|tr)", text_lower)
     if trieu_match:
         val_str = trieu_match.group(1).replace(",", ".")
         try:
-            return float(val_str) * 1_000_000, False
+            return round(float(val_str) * 1_000_000)
         except ValueError:
             pass
 
-    # Pattern: 800 nghìn, 800k
-    nghin_match = re.search(r"([\d\.,]+)\s*(?:nghìn|nghin|ngàn|ngan|k)", text)
+    # Pattern: 800 nghìn, 800k, 1750k, 1.750 nghìn
+    nghin_match = re.search(r"([\d\.,]+)\s*(?:nghìn|nghin|ngàn|ngan|k)", text_lower)
     if nghin_match:
-        val_str = nghin_match.group(1).replace(",", ".")
+        raw_str = nghin_match.group(1)
+        if "." in raw_str and len(raw_str.split(".")[-1]) == 3:
+            # e.g. "1.750" with 3 digits after dot -> thousand separator
+            val_str = raw_str.replace(".", "")
+        else:
+            val_str = raw_str.replace(",", ".")
         try:
-            return float(val_str) * 1_000, False
+            val = float(val_str)
+            p_calc = round(val * 1_000)
+            if 500 <= p_calc < 10000:
+                p_calc = round(p_calc * 1000)
+            return p_calc
         except ValueError:
             pass
 
-    # Direct digits: 3500000, 3.500.000
-    num_match = re.search(r"(\d[\d\.\,]{4,})", text)
+    # Direct digits: 3500000, 3.500.000, 3500k
+    num_match = re.search(r"(\d[\d\.\,]{3,})", text_lower)
     if num_match:
         val_str = num_match.group(1).replace(".", "").replace(",", "")
         try:
-            return float(val_str), False
+            p_calc = round(float(val_str))
+            if 500 <= p_calc < 10000:
+                p_calc = round(p_calc * 1000)
+            return p_calc
         except ValueError:
             pass
 
-    return None, False
+    return text if len(text) <= 50 else None
 
 
 def parse_area(area_text: str) -> Optional[float]:
@@ -84,7 +102,7 @@ def parse_area(area_text: str) -> Optional[float]:
     if match:
         val_str = match.group(1).replace(",", ".")
         try:
-            return float(val_str)
+            return round(float(val_str), 2)
         except ValueError:
             return None
     return None
@@ -99,8 +117,12 @@ def parse_phongtro123_detail(html_content: str, url: str) -> Dict[str, Any]:
     except Exception:
         soup = BeautifulSoup(html_content, "html.parser")
 
-    # Native ID from URL (e.g., ...-pr654321.html)
-    native_id_match = re.search(r"-pr(\d+)\.html", url)
+    # Native ID from URL (e.g., ...-pr654321.html or pr654321)
+    native_id_match = re.search(r"-pr(\d+)\.html?", url)
+    if not native_id_match:
+        native_id_match = re.search(r"pr(\d+)", url)
+    if not native_id_match:
+        native_id_match = re.search(r"-(\d+)\.html?", url)
     native_id = native_id_match.group(1) if native_id_match else "unknown"
 
     # Title
@@ -111,7 +133,7 @@ def parse_phongtro123_detail(html_content: str, url: str) -> Dict[str, Any]:
     parent = h1.parent if h1 else soup
     price_elem = parent.select_one(".text-green.fs-5, .text-green, .item.price, .post-summary .price")
     price_raw = price_elem.get_text(strip=True) if price_elem else ""
-    price_vnd, is_negotiable = parse_price(price_raw)
+    price = parse_price(price_raw)
 
     area_m2 = None
     for sp in parent.find_all("span"):
@@ -157,39 +179,34 @@ def parse_phongtro123_detail(html_content: str, url: str) -> Dict[str, Any]:
                 if len(images) >= 8:
                     break
 
-    # Phone Hash (Salted Hash)
-    phone_raw = ""
+    # Phone Number (Raw phone number without hashing)
+    phone_number = ""
     for a in soup.find_all("a", href=True):
         if a["href"].startswith("tel:"):
-            phone_raw = a["href"].replace("tel:", "").strip()
+            phone_number = a["href"].replace("tel:", "").strip()
             break
-    if not phone_raw:
+    if not phone_number:
         for elem in soup.find_all(["span", "div", "a"]):
             t = elem.get_text(strip=True)
             match = re.search(r"(0\d{9,10})", t)
             if match:
-                phone_raw = match.group(1)
+                phone_number = match.group(1)
                 break
 
-    phone_hash = ""
-    if phone_raw:
-        phone_clean = re.sub(r"\D", "", phone_raw)
-        if phone_clean:
-            phone_hash = hashlib.sha256((phone_clean + PROJECT_SALT).encode("utf-8")).hexdigest()
-
-    return {
+    rec = {
         "listing_id": f"phongtro123_{native_id}",
         "source": "phongtro123",
         "url": url,
         "title": title,
         "description": description,
-        "price_vnd_month": price_vnd,
-        "price_is_negotiable": is_negotiable,
+        "price_vnd": price,
         "area_m2": area_m2,
         "address_raw": address_raw,
         "room_type": "phòng trọ",
         "posted_at_raw": posted_at_raw,
-        "phone_hash": phone_hash,
+        "phone_number": phone_number,
         "image_urls": images,
         "n_images": len(images),
     }
+    from src.parse.normalizer import enrich_record
+    return enrich_record(rec)
