@@ -8,7 +8,6 @@ from src.parse.phongtro123_parser import (
     parse_area,
     parse_phongtro123_detail,
 )
-from src.parse.alonhadat_parser import parse_alonhadat_detail
 from src.parse.filter import is_valid_rental_room, is_listing_expired, MAX_RENTAL_PRICE_VND
 
 
@@ -164,41 +163,6 @@ class TestParsersAndFilters(unittest.TestCase):
         self.assertEqual(result["area_m2"], 22.0)
         self.assertIn("Cầu Giấy", result["address_raw"])
         self.assertEqual(result["phone_number"], "0987654321")
-
-    def test_parse_alonhadat_mock_html(self):
-        mock_html = """
-        <html>
-            <body>
-                <header class="title">
-                    <h1>Phòng trọ sinh viên Thanh Xuân giá rẻ</h1>
-                    <time class="date">09/09/2026</time>
-                </header>
-                <section class="more-info">
-                    <span class="price">Giá: <data class="value" itemprop="price" value="2500000">2,5 triệu / tháng</data></span>
-                    <span class="area">Diện tích: <span itemprop="value">20</span> m²</span>
-                </section>
-                <address class="current-address">Triều Khúc, Phường Thanh Xuân, Hà Nội</address>
-                <section class="detail text-content">Nhà gần chợ và đại học Hà Nội.</section>
-                <div class="gallery">
-                    <img class="limage" src="/files/properties/2026/9/img1.jpg" />
-                </div>
-                <div class="contact-info">
-                    <a href="tel:0912345678" class="phone">0912345678</a>
-                </div>
-            </body>
-        </html>
-        """
-        url = "https://alonhadat.com.vn/phong-tro-thanh-xuan-888888.html"
-        result = parse_alonhadat_detail(mock_html, url)
-
-        self.assertEqual(result["listing_id"], "alonhadat_888888")
-        self.assertEqual(result["price_vnd"], 2500000.0)
-        self.assertNotIn("price_is_negotiable", result)
-        self.assertEqual(result["area_m2"], 20.0)
-        self.assertIn("Thanh Xuân", result["address_raw"])
-        self.assertEqual(len(result["image_urls"]), 1)
-        self.assertTrue(result["image_urls"][0].startswith("https://alonhadat.com.vn"))
-        self.assertEqual(result["phone_number"], "0912345678")
 
     def test_normalizer_features(self):
         from src.parse.normalizer import (

@@ -33,7 +33,6 @@ sys.path.insert(0, str(BASE_DIR))
 
 from src.crawl.fetcher import PoliteFetcher
 from src.parse.phongtro123_parser import parse_phongtro123_detail
-from src.parse.alonhadat_parser import parse_alonhadat_detail
 from src.parse.export import save_site_dataset
 from src.parse.filter import is_valid_rental_room, is_listing_expired, MAX_RENTAL_PRICE_VND
 
@@ -186,7 +185,7 @@ def fetch_and_parse_worker(
         if site == "phongtro123":
             record = parse_phongtro123_detail(detail_html, detail_url)
         else:
-            record = parse_alonhadat_detail(detail_html, detail_url)
+            return None, f"Unsupported site parser: {site}", detail_url
 
         record["city"] = "hanoi" if "hanoi" in city else ("hcm" if "hcm" in city else city)
         record["crawled_at"] = datetime.datetime.now().isoformat()
