@@ -1,0 +1,10 @@
+# HTTP Requests & Data processing
+requests>=2.31.0
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Configuration & Environment
+python-dotenv>=1.0.0
+
+# Jupyter Notebook support
+ipykernel>=6.29.0
