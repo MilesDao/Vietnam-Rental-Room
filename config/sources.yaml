@@ -1,0 +1,195 @@
+mogi:
+  enabled: true
+  base_url: "https://mogi.vn"
+  # Confirmed live 2026-09-10: Allow: / ; Disallow: /trang-ca-nhan/, *gclid*, *wbraid*,
+  # /api/, /template/, /MarketPrice/, /Property/. We only ever touch server-rendered
+  # category/listing pages, so none of our requests fall under the disallowed paths.
+  robots_txt: "https://mogi.vn/robots.txt"
+  disallow:
+    - "/trang-ca-nhan/"
+    - "/api/"
+    - "/template/"
+    - "/MarketPrice/"
+    - "/Property/"
+  # Dedicated phong-tro (rental room) category, filterable by city. This is the
+  # segment this project targets -- not mogi's full nha-dat inventory.
+  category_path: "thue-phong-tro-khu-nha-tro"
+  cities:
+    hanoi: "ha-noi"
+    hcmc: "ho-chi-minh"
+  pagination:
+    query_param: "cp"
+    start_page: 1
+    listings_per_page: 15
+
+  # Every province mogi publishes phong-tro inventory for, harvested from its
+  # category sitemaps on 2026-09-10 (sitemap-category-*.xml -> 6268 phong-tro
+  # URLs -> these 32 provinces). `--city all` walks every one of them.
+  # Ordered by how many phong-tro sub-pages mogi publishes per province, i.e.
+  # biggest markets first -- a run stopped early then still has HCMC/Hanoi.
+  # NOTE: mogi's HCMC slug is "ho-chi-minh"; "tp-hcm" also resolves, but the
+  # sitemap-canonical form is the one used here.
+  provinces:
+    - ho-chi-minh
+    - ha-noi
+    - da-nang
+    - binh-duong
+    - dong-nai
+    - ba-ria-vung-tau
+    - khanh-hoa
+    - long-an
+    - can-tho
+    - hai-phong
+    - binh-dinh
+    - an-giang
+    - quang-ngai
+    - ben-tre
+    - thua-thien-hue
+    - binh-thuan
+    - dong-thap
+    - tra-vinh
+    - tien-giang
+    - thai-nguyen
+    - hau-giang
+    - lam-dong
+    - ninh-thuan
+    - phu-yen
+    - quang-ninh
+    - soc-trang
+    - bac-giang
+    - tay-ninh
+    - bac-ninh
+    - binh-phuoc
+    - dak-lak
+    - vinh-long
+
+  # The four phong-tro sub-category views. These are NOT aliases -- measured
+  # 2026-09-10 on ho-chi-minh page 1: loi-di-rieng and o-chung-chu share ZERO
+  # listing ids with khu-nha-tro, nha-tro overlaps it 11/15. Crawling all four
+  # and deduping on listing_id is what maximizes coverage.
+  category_paths:
+    - thue-phong-tro-khu-nha-tro
+    - thue-phong-tro-nha-tro
+    - thue-phong-tro-loi-di-rieng
+    - thue-phong-tro-o-chung-chu
+
+  detail_url_pattern: '-id(\d+)/?$'
+  rate_limit:
+    min_delay_s: 1.5
+    max_delay_s: 3.0
+    max_concurrency: 2
+  retry:
+    max_attempts: 4
+    backoff_base_s: 2.0
+    retry_on_status: [429, 500, 502, 503, 504]
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36 (research crawler; contact: trungdao131105@gmail.com)"
+
+batdongsan:
+  enabled: true
+  base_url: "https://batdongsan.com.vn"
+  cities:
+    hanoi: "ha-noi"
+  category_paths:
+    - "cho-thue-phong-tro-nha-tro-ha-noi"
+
+alonhadat:
+  enabled: true
+  base_url: "https://alonhadat.com.vn"
+  # Confirmed live 2026-09-11: Disallow: /publish/handler/*, /publish/form/*,
+  # /can-mua*, /can-thue*, /nha-dat/can-mua*, /nha-dat/can-thue*. We only ever
+  # touch /cho-thue-phong-tro-nha-tro/... list pages and *-<id>.html detail
+  # pages, both outside every Disallow rule.
+  robots_txt: "https://alonhadat.com.vn/robots.txt"
+  disallow:
+    - "/publish/handler/"
+    - "/publish/form/"
+    - "/can-mua"
+    - "/can-thue"
+    - "/nha-dat/can-mua"
+    - "/nha-dat/can-thue"
+  # alonhadat has exactly one phong-tro category (no khu-nha-tro/nha-tro/etc
+  # split like mogi) -- kept as a list for symmetry with run_mogi.py's
+  # province x category frontier, not because there is a second one to add.
+  category_path: "cho-thue-phong-tro-nha-tro"
+  cities:
+    hanoi: "ha-noi"
+    hcmc: "ho-chi-minh"
+  pagination:
+    # Path segment, not a query param: page 1 is bare, page N>1 appends
+    # "/trang-N" (see src/crawl/spiders/alonhadat.py). 20 cards/page.
+    path_segment: "trang-{page}"
+    start_page: 1
+    listings_per_page: 20
+
+  # All 34 provinces of Vietnam's 2025 administrative reorganization (63->34),
+  # harvested 2026-09-11 from the site's own <select id="...slProvince"> —
+  # every option's `data-newlink` attribute is the current URL slug, already
+  # deduplicated (several pre-reorg provinces collapse to one new slug, e.g.
+  # Hà Nam/Nam Định -> ninh-binh). Unlike mogi, no sitemap harvest was needed:
+  # the province picker on any page already enumerates the authoritative set.
+  # Ordered as the site lists them (Hà Nội first, HCMC 6th) -- not alphabetical.
+  provinces:
+    - ha-noi
+    - hai-phong
+    - hue
+    - da-nang
+    - khanh-hoa
+    - ho-chi-minh
+    - can-tho
+    - an-giang
+    - bac-ninh
+    - ca-mau
+    - cao-bang
+    - dak-lak
+    - dien-bien
+    - dong-nai
+    - dong-thap
+    - gia-lai
+    - ha-tinh
+    - hung-yen
+    - lai-chau
+    - lam-dong
+    - lang-son
+    - lao-cai
+    - nghe-an
+    - ninh-binh
+    - phu-tho
+    - quang-ngai
+    - quang-ninh
+    - quang-tri
+    - son-la
+    - tay-ninh
+    - thai-nguyen
+    - thanh-hoa
+    - tuyen-quang
+    - vinh-long
+
+  category_paths:
+    - cho-thue-phong-tro-nha-tro
+
+  detail_url_pattern: '-(\d+)\.html$'
+  # alonhadat answers sustained crawling with a CAPTCHA page ("Vui lòng xác
+  # minh không phải Robot", served as HTTP 429 to the whole IP -- a cookie-less
+  # curl gets it too). Measured 2026-09-11: it appeared after ~30 requests at
+  # 1.5-3.0s and again after ~45 at 3.0-5.0s, and was still up 30+ min after
+  # the last request. A response containing any of these markers stops the run
+  # on the spot (ChallengeEncountered in src/crawl/fetcher.py) -- never retry,
+  # wait out, or solve it (docs/alonhadat_scraping.md section 8). Both markers
+  # are absent from every real page saved so far; tests/test_fetcher.py checks
+  # that. Don't add "CaptchaGenerator": every normal detail page has one, in
+  # its "report this listing" form.
+  challenge_markers:
+    - "/xac-thuc-nguoi-dung.html"
+    - "xác minh không phải Robot"
+  # 20-40s is an untested guess, ~8x slower than the pace that triggered the
+  # CAPTCHA -- not a rate known to stay under it. ~1,400 Hanoi requests at this
+  # pace take ~12 hours.
+  rate_limit:
+    min_delay_s: 20.0
+    max_delay_s: 40.0
+    max_concurrency: 2
+  retry:
+    max_attempts: 4
+    backoff_base_s: 2.0
+    retry_on_status: [429, 500, 502, 503, 504]
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36 (research crawler; contact: trungdao131105@gmail.com)"

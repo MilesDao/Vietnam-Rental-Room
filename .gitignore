@@ -1,0 +1,27 @@
+data/
+*.parquet
+*.db
+*.sqlite3
+.env
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.venv/
+venv/
+.project_salt
+.pytest_cache/
+
+# Generated exports containing raw or hashed PII / large scraped datasets.
+# See CLAUDE.md "Data & PII on disk" -- never commit these.
+*.bak
+/sample.csv
+/mogi_hanoi_extracted.csv
+/alonhadat_hanoi_extracted.csv
+/batdongsan_hanoi_extracted.csv
+/merged_hanoi_rentals.csv
+crawlers/*/data/
+crawlers/*/*.csv
+
+# Ad-hoc local debugging scratch, not pipeline code.
+/inspect_mogi.py
+/scratch.html
