@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# Secrets
+.env
+
+# Runtime crawl artifacts (keep committed *.csv datasets, ignore the rest)
+data/browser_profile/
+logs/
+**/checkpoints.json
+**/posts.jsonl
+**/posts_combined.jsonl
+**/dom_sample.html
+**/*.bak*

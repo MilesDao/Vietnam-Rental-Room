@@ -1,0 +1,54 @@
+sources:
+  phongtro123:
+    enabled: true
+    tier: 1
+    base_url: "https://phongtro123.com"
+    cities:
+      hanoi:
+        name: "Hà Nội - Phòng trọ"
+        start_url: "https://phongtro123.com/tinh-thanh/ha-noi"
+        page_pattern: "https://phongtro123.com/tinh-thanh/ha-noi?page={page}"
+      hanoi_ccmn:
+        name: "Hà Nội - Chung cư mini"
+        start_url: "https://phongtro123.com/cho-thue-can-ho-chung-cu-mini-ha-noi"
+        page_pattern: "https://phongtro123.com/cho-thue-can-ho-chung-cu-mini-ha-noi?page={page}"
+      hanoi_oghep:
+        name: "Hà Nội - Ở ghép"
+        start_url: "https://phongtro123.com/tim-nguoi-o-ghep-ha-noi"
+        page_pattern: "https://phongtro123.com/tim-nguoi-o-ghep-ha-noi?page={page}"
+      hanoi_dichvu:
+        name: "Hà Nội - Căn hộ dịch vụ"
+        start_url: "https://phongtro123.com/cho-thue-can-ho-dich-vu-ha-noi"
+        page_pattern: "https://phongtro123.com/cho-thue-can-ho-dich-vu-ha-noi?page={page}"
+      hanoi_nhanguyencan:
+        name: "Hà Nội - Nhà nguyên căn"
+        start_url: "https://phongtro123.com/cho-thue-nha-nguyen-can-ha-noi"
+        page_pattern: "https://phongtro123.com/cho-thue-nha-nguyen-can-ha-noi?page={page}"
+      hcm:
+        name: "TP. Hồ Chí Minh"
+        start_url: "https://phongtro123.com/tinh-thanh/ho-chi-minh"
+        page_pattern: "https://phongtro123.com/tinh-thanh/ho-chi-minh?page={page}"
+    rate_limit:
+      min_delay_sec: 0.1
+      max_delay_sec: 0.25
+      max_concurrency: 10
+    max_images_per_listing: 8
+
+  alonhadat:
+    enabled: true
+    tier: 1
+    base_url: "https://alonhadat.com.vn"
+    cities:
+      hanoi:
+        name: "Hà Nội"
+        start_url: "https://alonhadat.com.vn/cho-thue-phong-tro-nha-tro/ha-noi"
+        page_pattern: "https://alonhadat.com.vn/cho-thue-phong-tro-nha-tro/ha-noi/trang-{page}"
+      hcm:
+        name: "TP. Hồ Chí Minh"
+        start_url: "https://alonhadat.com.vn/cho-thue-phong-tro-nha-tro/ho-chi-minh"
+        page_pattern: "https://alonhadat.com.vn/cho-thue-phong-tro-nha-tro/ho-chi-minh/trang-{page}"
+    rate_limit:
+      min_delay_sec: 1.0
+      max_delay_sec: 2.0
+      max_concurrency: 1
+    max_images_per_listing: 8

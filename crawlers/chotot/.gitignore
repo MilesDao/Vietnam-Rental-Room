@@ -1,0 +1,43 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Caches and virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+
+# Environment variables & secrets (keep .env.example)
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# IDE & Editor settings
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Large / Raw Data Files
+# Tránh đẩy file dữ liệu thô dung lượng lớn (>15MB) lên Git
+*.json
+#chotot_hanoi_raw.csv
+chotot_hanoi_raw.json
+
+# Nếu không muốn commit file cleaned (~5.7MB), bỏ comment dòng dưới:
+# chotot_hanoi_cleaned.csv
+
+# Logs
+*.log

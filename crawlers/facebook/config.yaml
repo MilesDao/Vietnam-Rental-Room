@@ -1,0 +1,53 @@
+# Facebook public group crawler — configuration
+# Read-only research crawler. Collects only content visible to your own
+# logged-in account. Does not interact with posts in any way.
+
+group_url: "https://web.facebook.com/groups/1164344644748784"
+
+max_posts: 1000
+
+crawl:
+  save_every: 10                    # write checkpoint every N new posts
+  max_scroll_without_new_posts: 10  # stop after this many barren scrolls
+  min_delay_seconds: 2              # randomized human delay between scrolls
+  max_delay_seconds: 5
+
+extract:
+  post_text: true
+  post_url: true
+  timestamp: true
+  reactions: true
+  comments: true
+  shares: true
+  image_urls: true
+  video_urls: true
+
+privacy:
+  collect_author_name: false        # author identity is NOT collected
+  collect_profile_url: false
+
+# --- runtime settings (not in the original spec, needed to actually run) ---
+
+browser:
+  # Persistent profile. You log in manually ONCE (via --login); the session is
+  # reused on later runs. Credentials are never read.
+  user_data_dir: "./data/browser_profile"
+  # "chrome" uses your system Google Chrome — Facebook keeps it logged in far
+  # more reliably than Playwright's bundled Chromium. Set to null to use the
+  # bundled Chromium instead. If you change this, re-run --login once.
+  channel: "chrome"
+  # MOST RELIABLE for Facebook: attach to a Chrome YOU launched and logged
+  # into, instead of a Playwright-managed profile (which Facebook keeps
+  # logging out). Uncomment to enable, then follow README "CDP mode".
+  # Use 127.0.0.1 (not "localhost") — Chrome's debug port is IPv4-only.
+  cdp_url: "http://127.0.0.1:9222"
+  headless: false                   # must be false for first manual login
+  page_load_timeout_ms: 60000
+
+paths:
+  posts_jsonl: "./data/posts.jsonl"
+  posts_csv: "./data/posts.csv"
+  checkpoint: "./data/checkpoints.json"
+  validation_report: "./data/validation_report.md"
+  log: "./logs/crawler.log"
+  dom_sample: "./data/dom_sample.html"
