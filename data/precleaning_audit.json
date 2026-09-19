@@ -1,0 +1,233 @@
+{
+  "total_listings": 17325,
+  "missingness": {
+    "listing_id": {
+      "non_null": 17325,
+      "missing": 0,
+      "missing_pct": 0.0
+    },
+    "platform": {
+      "non_null": 17325,
+      "missing": 0,
+      "missing_pct": 0.0
+    },
+    "source_file": {
+      "non_null": 17325,
+      "missing": 0,
+      "missing_pct": 0.0
+    },
+    "title": {
+      "non_null": 17325,
+      "missing": 0,
+      "missing_pct": 0.0
+    },
+    "description": {
+      "non_null": 13450,
+      "missing": 3875,
+      "missing_pct": 22.37
+    },
+    "city": {
+      "non_null": 17325,
+      "missing": 0,
+      "missing_pct": 0.0
+    },
+    "district": {
+      "non_null": 15838,
+      "missing": 1487,
+      "missing_pct": 8.58
+    },
+    "district_raw": {
+      "non_null": 15838,
+      "missing": 1487,
+      "missing_pct": 8.58
+    },
+    "ward": {
+      "non_null": 13450,
+      "missing": 3875,
+      "missing_pct": 22.37
+    },
+    "address": {
+      "non_null": 16976,
+      "missing": 349,
+      "missing_pct": 2.01
+    },
+    "latitude": {
+      "non_null": 16327,
+      "missing": 998,
+      "missing_pct": 5.76
+    },
+    "longitude": {
+      "non_null": 16327,
+      "missing": 998,
+      "missing_pct": 5.76
+    },
+    "price_vnd": {
+      "non_null": 16203,
+      "missing": 1122,
+      "missing_pct": 6.48
+    },
+    "area_m2": {
+      "non_null": 11583,
+      "missing": 5742,
+      "missing_pct": 33.14
+    },
+    "house_type": {
+      "non_null": 15857,
+      "missing": 1468,
+      "missing_pct": 8.47
+    },
+    "electric_price": {
+      "non_null": 4823,
+      "missing": 12502,
+      "missing_pct": 72.16
+    },
+    "water_price": {
+      "non_null": 4498,
+      "missing": 12827,
+      "missing_pct": 74.04
+    },
+    "wifi_price": {
+      "non_null": 3013,
+      "missing": 14312,
+      "missing_pct": 82.61
+    },
+    "other_utilities_price": {
+      "non_null": 2763,
+      "missing": 14562,
+      "missing_pct": 84.05
+    },
+    "parking_fee": {
+      "non_null": 2218,
+      "missing": 15107,
+      "missing_pct": 87.2
+    },
+    "air_conditioner": {
+      "non_null": 17325,
+      "missing": 0,
+      "missing_pct": 0.0
+    },
+    "water_heater": {
+      "non_null": 17325,
+      "missing": 0,
+      "missing_pct": 0.0
+    },
+    "refrigerator": {
+      "non_null": 17325,
+      "missing": 0,
+      "missing_pct": 0.0
+    },
+    "washing_machine": {
+      "non_null": 17325,
+      "missing": 0,
+      "missing_pct": 0.0
+    },
+    "elevator": {
+      "non_null": 17325,
+      "missing": 0,
+      "missing_pct": 0.0
+    },
+    "balcony_window": {
+      "non_null": 17325,
+      "missing": 0,
+      "missing_pct": 0.0
+    },
+    "fire_safety": {
+      "non_null": 17325,
+      "missing": 0,
+      "missing_pct": 0.0
+    },
+    "pet_allowed": {
+      "non_null": 17325,
+      "missing": 0,
+      "missing_pct": 0.0
+    },
+    "amenities_list": {
+      "non_null": 13069,
+      "missing": 4256,
+      "missing_pct": 24.57
+    },
+    "contact_name": {
+      "non_null": 5885,
+      "missing": 11440,
+      "missing_pct": 66.03
+    },
+    "contact_phone": {
+      "non_null": 11422,
+      "missing": 5903,
+      "missing_pct": 34.07
+    },
+    "contact_zalo": {
+      "non_null": 5633,
+      "missing": 11692,
+      "missing_pct": 67.49
+    },
+    "image_count": {
+      "non_null": 17325,
+      "missing": 0,
+      "missing_pct": 0.0
+    },
+    "image_urls": {
+      "non_null": 17236,
+      "missing": 89,
+      "missing_pct": 0.51
+    },
+    "listing_url": {
+      "non_null": 16543,
+      "missing": 782,
+      "missing_pct": 4.51
+    },
+    "posted_at_raw": {
+      "non_null": 5278,
+      "missing": 12047,
+      "missing_pct": 69.54
+    },
+    "crawled_at": {
+      "non_null": 9717,
+      "missing": 7608,
+      "missing_pct": 43.91
+    }
+  },
+  "price_audit": {
+    "valid_count": 16183,
+    "missing_count": 1142,
+    "min": 0.0,
+    "max": 20000000000.0,
+    "median": 3900000.0,
+    "iqr": 2300000.0,
+    "tukey_lower_fence": 0.0,
+    "tukey_upper_fence": 8650000.0,
+    "anomalies_under_500k": 12,
+    "anomalies_under_800k": 29,
+    "statistical_outliers_above_upper_fence": 1673,
+    "commercial_outliers_above_25m": 130,
+    "extreme_sales_above_50m": 33
+  },
+  "area_audit": {
+    "valid_count": 11583,
+    "missing_count": 5742,
+    "min": 0.0,
+    "max": 30000.0,
+    "median": 27.0,
+    "iqr": 13.0,
+    "tukey_lower_fence": 2.5,
+    "tukey_upper_fence": 54.5,
+    "cubicle_anomalies_under_8m2": 35,
+    "statistical_outliers_above_upper_fence": 1021,
+    "large_units_above_120m2": 99,
+    "commercial_land_above_200m2": 31
+  },
+  "spatial_audit": {
+    "total_records": 17325,
+    "valid_coordinates": 16327,
+    "missing_coordinates": 998,
+    "in_bounds_hanoi": 16160,
+    "hcmc_cross_city_contamination": 167,
+    "other_out_of_bounds": 0
+  },
+  "duplication_audit": {
+    "exact_id_duplicates": 0,
+    "full_row_duplicates": 0,
+    "near_dupes_title_price": 1601,
+    "near_dupes_lat_lon_price": 7191
+  }
+}
