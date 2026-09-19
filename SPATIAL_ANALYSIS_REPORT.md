@@ -46,7 +46,7 @@ flowchart TD
 * **Key Insights:**
   1. **Dual Mega-Clusters:** Rental supply is dominated by two primary hubs:
      - **West Hub (Cầu Giấy / Mễ Trì):** Encompasses Vietnam National University (VNU), Diplomatic Academy, and the Duy Tân tech office corridor.
-     - **South Hub (Bách - Kinh - Xây):** Surrounds Hanoi University of Science & Technology (HUST), National Economics University (NEU), and Civil Engineering University (NUCE).
+     - **South Hub (Bách - Kinh - Xây):** Surrounds Hanoi University of Science & Technology (HUST), National Economics University (NEU), and Civil Engineering University (HUCE).
   2. **Suburban Satellites:** Distinct, self-contained student supply clusters emerge in the Northwest (*Nhổn / Hanoi University of Industry*) and Southwest (*Văn Quán / Hà Đông*).
   3. **Low-Density Historic & Natural Cores:** Hoàn Kiếm (Old Quarter) and West Lake contain very sparse room rental points, as land is allocated to commercial retail, hospitality, and luxury residences.
 
