@@ -195,3 +195,16 @@ def test_area_ranges_become_midpoint_with_bounds():
     assert (out.loc[0, "area_m2_min"], out.loc[0, "area_m2_max"]) == (20, 27)
     assert out.loc[1, "area_m2"] == 25 and not out.loc[1, "area_is_range"]
     assert pd.isna(out.loc[2, "area_m2"]) and out.loc[2, "area_missing"]
+
+
+def test_mark_duplicates_cross_platform():
+    import pandas as pd
+    from src.clean.sample_schema import mark_duplicates
+    row = dict(district="Cầu Giấy", address="Ngõ 58 Nguyễn Khánh Toàn", price_vnd=7e6, area_m2=None)
+    df = pd.DataFrame([
+        dict(row, listing_id="a", platform="Facebook", title="1n1k ngõ 58 NKT 7tr"),
+        dict(row, listing_id="b", platform="Rencity.vn", title="PHÒNG 1K1N SIÊU ĐẸP", description="x"),
+    ])
+    assert mark_duplicates(df).duplicate_of.isna().all()
+    r = mark_duplicates(df, cross_platform=True)
+    assert r.duplicate_of.notna().sum() == 1 and r.n_duplicates.max() == 1

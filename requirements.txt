@@ -4,3 +4,6 @@ lxml>=5.0
 pandas>=2.2
 pyarrow>=15.0
 PyYAML>=6.0
+streamlit>=1.40
+folium>=0.17
+streamlit-folium>=0.22

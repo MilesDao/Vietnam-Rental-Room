@@ -35,7 +35,7 @@ from src.parse.alonhadat_parser import parse_detail_page
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RAW_DIR = REPO_ROOT / "data" / "raw" / "html" / "alonhadat"
 DB_PATH = REPO_ROOT / "data" / "alonhadat_seen_urls.db"
-OUT_CSV = REPO_ROOT / "alonhadat_hanoi_extracted.csv"
+OUT_CSV = REPO_ROOT / "data" / "csv" / "alonhadat_hanoi_extracted.csv"
 
 COLUMNS = [
     "platform", "listing_id", "title", "district", "ward", "address",

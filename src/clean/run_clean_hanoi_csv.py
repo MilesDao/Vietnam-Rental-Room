@@ -6,7 +6,7 @@ Usage:
     python -m src.clean.run_clean_hanoi_csv --no-geocode      # clean only
     python -m src.clean.run_clean_hanoi_csv --max-requests 50 # cap new Nominatim requests this run
 
-Inputs, at the repo root and never modified: mogi_hanoi_extracted.csv,
+Inputs, under data/csv/ and never modified: mogi_hanoi_extracted.csv,
 alonhadat_hanoi_extracted.csv, sample.csv (the 31-column flat schema; rules in
 src/clean/sample_schema.py).
 
@@ -37,7 +37,8 @@ from src.geo.address import build_candidates
 from src.geo.nominatim import ATTRIBUTION, DEFAULT_USER_AGENT, NominatimBlocked, NominatimGeocoder
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-INPUTS = ["mogi_hanoi_extracted.csv", "alonhadat_hanoi_extracted.csv", "sample.csv"]
+CSV_DIR = "data/csv"
+INPUTS = [f"{CSV_DIR}/mogi_hanoi_extracted.csv", f"{CSV_DIR}/alonhadat_hanoi_extracted.csv", f"{CSV_DIR}/sample.csv"]
 OUT_DIR = REPO_ROOT / "data" / "processed"
 COMBINED_PATH = OUT_DIR / "hanoi_listings_clean.csv"
 REPORT_PATH = REPO_ROOT / "reports" / "hanoi_csv_cleaning_report.md"
@@ -276,8 +277,8 @@ def main() -> None:
     ap.add_argument("--max-requests", type=int, default=None,
                     help="Stop geocoding after this many new Nominatim requests.")
     ap.add_argument("--write-back", action="store_true",
-                    help="Also fill latitude/longitude/geo_confidence in the original CSVs at the "
-                         "repo root, keeping every other column and a .bak copy of each.")
+                    help="Also fill latitude/longitude/geo_confidence in the original CSVs under "
+                         "data/csv/, keeping every other column and a .bak copy of each.")
     args = ap.parse_args()
 
     cleaned = mark_duplicates(clean_sample_frame(load_inputs()))

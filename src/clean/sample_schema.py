@@ -296,7 +296,7 @@ def _same_number(a: float, b: float, *, abs_tol: float = 0.0, rel_tol: float = 0
     return abs(a - b) <= max(abs_tol, rel_tol * max(abs(a), abs(b)))
 
 
-def mark_duplicates(df: pd.DataFrame) -> pd.DataFrame:
+def mark_duplicates(df: pd.DataFrame, cross_platform: bool = False) -> pd.DataFrame:
     """Add duplicate_of (the kept row's listing_id; None on kept rows) and n_duplicates.
 
     Two rows are duplicates when they come from the same platform and district,
@@ -309,8 +309,10 @@ def mark_duplicates(df: pd.DataFrame) -> pd.DataFrame:
     are formed with complete linkage, as in src/clean/dedup.py, so a chain of
     near-matches can't merge rows that don't match each other. Within a group
     the row with the most filled fields is kept (earliest row on a tie).
-    Cross-platform matches are left alone: they are separate adverts, and
-    each platform's file should keep its own rows.
+    By default cross-platform matches are left alone: they are separate adverts,
+    and each platform's file should keep its own rows. cross_platform=True
+    (used by the recommender, which wants one row per room) matches across
+    platforms too.
     """
     df = df.reset_index(drop=True)
     keys = pd.DataFrame({
@@ -335,7 +337,8 @@ def mark_duplicates(df: pd.DataFrame) -> pd.DataFrame:
         return bool(a["address"]) and a["address"] == b["address"]
 
     groups: dict[int, set[int]] = {i: {i} for i in df.index}
-    for _, block in keys.groupby(["platform", "district"], sort=False):
+    block_cols = ["district"] if cross_platform else ["platform", "district"]
+    for _, block in keys.groupby(block_cols, sort=False):
         ids = list(block.index)
         for x in range(len(ids)):
             for y in range(x + 1, len(ids)):

@@ -12,16 +12,18 @@ venv/
 .pytest_cache/
 
 # Generated exports containing raw or hashed PII / large scraped datasets.
-# See CLAUDE.md "Data & PII on disk" -- never commit these.
+# Live under data/csv/ (already covered by the data/ rule above) -- never commit these.
+# See CLAUDE.md "Data & PII on disk".
 *.bak
-/sample.csv
-/mogi_hanoi_extracted.csv
-/alonhadat_hanoi_extracted.csv
-/batdongsan_hanoi_extracted.csv
-/merged_hanoi_rentals.csv
 crawlers/*/data/
 crawlers/*/*.csv
 
 # Ad-hoc local debugging scratch, not pipeline code.
 /inspect_mogi.py
 /scratch.html
+
+# Local-only project instructions; not published to the remote.
+/CLAUDE.md
+
+# Docs are local-only
+/docs/

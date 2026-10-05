@@ -19,7 +19,8 @@ def main():
     log = logging.getLogger("export")
 
     raw_dir = Path("data/raw/html/mogi")
-    out_csv = Path("mogi_hanoi_extracted.csv")
+    out_csv = Path("data/csv/mogi_hanoi_extracted.csv")
+    out_csv.parent.mkdir(parents=True, exist_ok=True)
 
     columns = [
         "platform", "listing_id", "title", "district", "ward", "address", 
