@@ -19,7 +19,7 @@ WEIGHTS = {"price": 0.30, "value": 0.25, "distance": 0.25, "amenity": 0.20}
 SHOW = ["listing_id", "platform", "title", "district", "ward", "price_vnd", "area_est", "area_imputed",
         "estimated_total_living_cost", "market_value_tier", "nearest_university",
         "distance_to_nearest_university_km", "distance_to_nearest_metro_km",
-        "amenities_list", "listing_url", "score"]
+        "amenities_list", "listing_url", "score", "s_price", "s_value", "s_dist", "s_amenity"]
 
 
 def load(path=DATA):
@@ -131,6 +131,7 @@ def recommend(d, budget, districts=(), min_area=None, need=(), university=None,
     s_dist = 1 - _rank01(dist)
     s_am = _rank01(m.amenity_count)
     w = weights or WEIGHTS
+    m["s_price"], m["s_value"], m["s_dist"], m["s_amenity"] = s_price, s_value, s_dist, s_am   # parts of the score, 0-1
     m["score"] = (w["price"] * s_price + w["value"] * s_value
                   + w["distance"] * s_dist + w["amenity"] * s_am).round(3)
     m = m.sort_values("score", ascending=False)

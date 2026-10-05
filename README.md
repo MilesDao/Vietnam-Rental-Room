@@ -80,19 +80,34 @@ python -m src.recsys.evaluate                  # persona evaluation -> docs/RECS
 python -m pytest tests -q
 ```
 
-How to check the Streamlit app by hand:
+How to use / check the Streamlit app (layout follows listing sites such as yourhome.top):
 
-1. Start it with the command above and open the URL it prints. The first load takes a few seconds.
-2. Defaults (budget 4M) should show a map with numbered markers, a table next to it and a
-   caption under the map; the sidebar filters change both together.
-3. Try: budget slider down to 1.0 (few or no results; a warning appears when nothing matches);
-   pick a *Quận*; pick a *Gần trường* (a distance slider appears); tick two amenities;
-   untick/tick "Hiện ga metro và trường đại học" (green cap = university, purple dot = metro);
-   tick "Cả tin ở ghép / slot" (cheap per-bed ads come back).
-4. Click a marker for the popup (price, area — `~` means estimated — and a link to the ad);
-   rank numbers in the tooltip should match the table order.
-5. A few listings have no coordinates: they appear in the table but not on the map (the caption says how many).
-6. Stop with Ctrl+C. Headless smoke test: `python -c "from streamlit.testing.v1 import AppTest; at=AppTest.from_file('src/recsys/app.py', default_timeout=120).run(); print(at.exception)"` should print an empty list.
+1. Start it with the command above and open the URL it prints (first load takes a few seconds).
+2. **Trang chủ view** — left sidebar filters: *Khoảng giá*, *Loại phòng*, *Diện tích*, *Tiện nghi*, *Quận*,
+   *Gần trường đại học*, *Nguồn tin*, and a checkbox to include shared-room/slot ads. Above the cards:
+   "N kết quả phù hợp", a *Sắp xếp* box (Phù hợp nhất = the recommender score, giá, diện tích, gần trung tâm) and
+   a *Hiển thị* box (8 / 12 / 24 / 48 / 100 tin per page). Each card shows photo, type badge, price, area, address,
+   **Xem tin** (opens the ad), **Bản đồ** (small popup map of that room) and **Ảnh & liên hệ** (up to 5 photos and, when the data has one, the phone number with a copy button). Use « ‹ › » for "Trang x/y".
+   Changing any filter returns to page 1.
+3. **Bản đồ view** (switch at the top) — every room matching the filters is a soft-coloured price label ("3,5tr";
+   green < 3 triệu, blue 3–5, rose > 5); nearby rooms merge into grey numbered discs. **Click a number**: the map glides
+   and zooms into the area those rooms cover (rooms on the exact same spot fan out instead). Pick a *Bán kính*
+   (0.5–10 km) and **click an empty point**: the map glides there (from where you were looking, or from the whole city the
+   first time), a dashed teal ring gently "breathes", and the rooms inside are listed below, nearest first;
+   Click a **price label** to open a popup with photos (click a thumbnail to enlarge it), the key facts, a link to the original ad and, when available, a *Hiện số điện thoại* button that reveals the number. *Xóa điểm đã chọn* resets it. Zoom steps are fractional (0.25) so scroll/+/- zooming is smooth. At most 5000 rooms are drawn.
+4. Checks worth doing: price range 0.5–1 triệu (few results), 20–25 triệu (few results), a *Quận*, a *Gần trường*,
+   a different *Hiển thị* size, then page forward; click the map twice at different places.
+5. **Phone numbers / privacy.** Only numbers already present in the data are shown, and only about 4,900 listings
+   have one (Phongtro123 mostly; the rest hold a hash or nothing). Facebook posts never show a photo or a number
+   (personal data, `docs/PLAN.md` Phase 2B). Numbers are never put in the results table or any export. They do sit
+   in the map page's data for the rooms drawn, so do not screenshot or share the app publicly. This goes against the
+   project's rule that raw numbers must be hashed at ingest (the branch data already contains them): start the app
+   with `RECSYS_SHOW_PHONE=0` (e.g. `RECSYS_SHOW_PHONE=0 streamlit run src/recsys/app.py`; PowerShell:
+   `$env:RECSYS_SHOW_PHONE=0`) to hide them.
+   A few listings lack coordinates:
+   they appear in the list but not on the map. Not implemented vs. yourhome.top: the two-point search, the poster-type
+   filter (replaced by *Nguồn tin*), "newest first" (most listings have no post date) and lease-expiry dates.
+6. Stop with Ctrl+C. Headless smoke test: `python -c "from streamlit.testing.v1 import AppTest; at=AppTest.from_file('src/recsys/app.py', default_timeout=240).run(); print(at.exception)"` should print an empty list.
 
 Known limits: ratings used so far were assigned by the assistant, not by people; coordinates are
 ward-level for many listings; see `docs/RECSYS_UPDATE_REPORT.md` and `docs/RECSYS_RATING_STUDY.md`.
