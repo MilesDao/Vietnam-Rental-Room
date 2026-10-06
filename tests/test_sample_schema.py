@@ -208,3 +208,30 @@ def test_mark_duplicates_cross_platform():
     assert mark_duplicates(df).duplicate_of.isna().all()
     r = mark_duplicates(df, cross_platform=True)
     assert r.duplicate_of.notna().sum() == 1 and r.n_duplicates.max() == 1
+
+
+def test_canonical_house_type_merges_source_spellings():
+    from src.clean.sample_schema import canonical_house_type as c
+    assert {c(v) for v in ["phong_tro", "Phòng trọ", "Phòng trọ / Khác", "wc-chung", "gacxep"]} == {"Phòng trọ"}
+    assert c("studio") == c("Studio khép kín") == "Studio"
+    assert c("nguyen-can") == c("Nhà nguyên căn") == "Nhà nguyên căn"
+    assert c("2-ngu") == c("1 Phòng Ngủ (1PN/1N1K)") == "Căn hộ"
+    assert c("Chung cư mini (CCMN)") == "Chung cư mini" and c(None) is None and c("xyz") == "Khác"
+    for label in ["Phòng trọ", "Studio", "Căn hộ", "Chung cư mini", "Nhà nguyên căn", "Ở ghép", "Khác"]:
+        assert c(label) == label   # canonical labels map to themselves
+
+
+def test_cross_site_rule_needs_same_poster_price_and_place():
+    base = dict(district="Quận Cầu Giấy", address="", contact_phone="ab" * 8, latitude=21.03, longitude=105.80)
+    df = pd.DataFrame([
+        dict(base, platform="YourHome.top", listing_id="YH_1", title="Phòng đẹp gần ĐH", price_vnd=3_000_000, area_m2=None),
+        dict(base, platform="Alonhadat.vn", listing_id="al_1", title="Cho thuê phòng trọ", price_vnd=3_100_000,
+             area_m2=20, latitude=21.0305),                                                  # ~55 m away
+        dict(base, platform="Alonhadat.vn", listing_id="al_2", title="Phòng khác", price_vnd=4_500_000, area_m2=30),
+        dict(base, platform="Mogi.vn", listing_id="mogi_9", title="Phòng xa", price_vnd=3_000_000, area_m2=None,
+             latitude=21.04),                                                                # ~1.1 km away
+    ])
+    out = mark_duplicates(df, cross_platform=True).set_index("listing_id").duplicate_of
+    assert out[["YH_1", "al_1"]].isna().sum() == 1 and out[["YH_1", "al_1"]].dropna().iloc[0] in ("YH_1", "al_1")
+    assert pd.isna(out["al_2"]) and pd.isna(out["mogi_9"])   # same poster but other price / other place
+    assert mark_duplicates(df).duplicate_of.isna().all()   # same-platform mode never uses the rule

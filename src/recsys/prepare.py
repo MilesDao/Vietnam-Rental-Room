@@ -7,7 +7,9 @@ Steps, in order:
                      the result is also kept as data/unified_hanoi_rentals_geofixed.csv for audit and figures
 2. drop            - rows outside Hanoi (city column) and fallback rows whose ward could not be found
                      (their only location was the fake point; most are outside Hanoi)
-3. privacy         - contact_phone salted-hashed with src/crawl/pii.py, contact_name dropped
+3. privacy         - contact_phone salted-hashed with src/crawl/pii.py, contact_name dropped, phone numbers
+                     written in titles/descriptions replaced by "[SĐT ẩn]";
+                     house_type mapped to one label set (sample_schema.canonical_house_type)
 4. dates           - posted_at / days_old from posted_at_raw ("Thứ 3, 23:07 08/09/2026"), relative to the
                      newest post in the data (the snapshot date), so the numbers do not drift with time
 5. dedup           - cross-platform duplicates marked (sample_schema.mark_duplicates)
@@ -22,7 +24,7 @@ import numpy as np
 import pandas as pd
 
 from src.clean.link_check import mark_bad_links, parse_images
-from src.clean.sample_schema import mark_duplicates
+from src.clean.sample_schema import canonical_house_type, mark_duplicates
 from src.crawl.pii import hash_value
 from src.recsys import price_model
 from src.recsys.regeocode_fallback import repair
@@ -37,6 +39,8 @@ OUT = ROOT / "data/unified_hanoi_rentals_dedup.csv"
 
 def hash_phone(value):
     """Raw Vietnamese numbers -> project salted hash; values that are already hashes stay as they are."""
+    if isinstance(value, (int, float, np.integer, np.floating)) and not pd.isna(value):
+        value = str(int(value))   # a CSV read without dtype=str turns 0912345678 into 912345678
     if not isinstance(value, str):
         return None
     if re.fullmatch(r"[0-9a-f]{16}|[0-9a-f]{64}", value.strip()):   # already hashed (pii.py: 16 hex; Facebook source: SHA-256)
@@ -47,6 +51,14 @@ def hash_phone(value):
     elif re.fullmatch(r"[1-9]\d{8,9}", digits):   # leading 0 lost (CSV read as a number)
         digits = "0" + digits
     return hash_value(digits) if re.fullmatch(r"0\d{9,10}", digits) else None   # never pass through something unrecognised
+
+
+PHONE_IN_TEXT = re.compile(r"(?<!\d)(?:\+?84|0)[ .-]?\d{2,3}[ .-]?\d{3}[ .-]?\d{3,4}(?!\d)")
+
+
+def redact_phones(text):
+    """Ads print the landlord's number in the text ("LH/Zalo 09xx..."); the app shows that text."""
+    return PHONE_IN_TEXT.sub("[SĐT ẩn]", text) if isinstance(text, str) else text
 
 
 def add_dates(d):
@@ -82,11 +94,14 @@ def drop_unlocatable(d):
 
 
 def main():
-    d = repair(pd.read_csv(SRC, low_memory=False))
+    d = repair(pd.read_csv(SRC, low_memory=False, dtype={"contact_phone": str, "contact_zalo": str}))
     d.to_csv(GEOFIXED, index=False, encoding="utf-8-sig")
     d = drop_unlocatable(d)
     d["contact_phone"] = d.contact_phone.map(hash_phone)
     d = d.drop(columns=["contact_name"], errors="ignore")
+    for c in ["title", "description"]:
+        d[c] = d[c].map(redact_phones)
+    d["house_type"] = d.house_type.map(canonical_house_type)   # one spelling per type across sources
     d = add_dates(d)
     d = gate_links(drop_stale(d))
     d = mark_duplicates(d, cross_platform=True)

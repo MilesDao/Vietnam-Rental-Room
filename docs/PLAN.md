@@ -1,545 +1,192 @@
-# Vietnam Rental Room — Data Pipeline, EDA & Map-Based Recommender
+# Plan: update and enhance the project report
 
-**Goal:** crawl rental-room listings (attributes + images) from Vietnamese classifieds,
-build a clean analysable dataset, engineer features, run deep EDA, and finally serve a
-recommendation system on an interactive map of Vietnam.
+**Target:** `docs/latex/report.tex` → `docs/latex/report.pdf`
+**Input:** the review in `docs/COUNTER_REPORT.md` (section numbers in brackets, e.g. [CR 2.1], point to it).
+**Date:** 2026-10-07
 
-**Stack:** Python 3.12 · requests/httpx + BeautifulSoup/lxml (+ Playwright for JS pages) ·
-pandas / polars · scikit-learn · Pillow + imagehash + PyTorch (CLIP/ResNet) ·
-DuckDB or SQLite + Parquet · Folium / Streamlit / deck.gl · Jupyter.
+**Goal:** every number in the report is re-measured on fixed code, and every claim matches its evidence. The report also gains the sections a marker expects that are missing today: related work, ethics and law, error analysis, reproducibility, contributions and AI disclosure.
 
-**Assumptions (confirm before Phase 1 execution)**
-- Target cities: Hanoi + Ho Chi Minh City first, then Da Nang / Hai Phong / Can Tho.
-- **Tier 1 — structured classifieds (the ML backbone).** Priority order set by live recon
-  on 2026-09-09 (see Phase 1): **1. Chotot** (public JSON API, 82 fields, coordinates
-  included) → **2. phongtro123** (server-rendered, exactly the phòng trọ segment) →
-  **3. alonhadat** (no bot protection at all) → **4. mogi** (server-rendered) →
-  **✗ batdongsan — cut**, Cloudflare challenge blocks even its robots.txt.
-- **Tier 2 — social (Facebook groups, Threads):** free-text posts, no schema. Treated as a
-  *separate, smaller, information-extraction* corpus — see **Phase 2B**. Do not assume this
-  tier is available until the access route in 2B.0 is settled; Tier 1 must stand alone.
-- Target volume: Tier 1 30k–80k listings / 150k–400k images; Tier 2 2k–10k posts.
-- Tier 1 is publicly visible listing data. Tier 2 is **personal data** and carries ToS,
-  legal, and ethics obligations — phone numbers and poster identity are hashed at ingest,
-  raw PII never leaves the ingest boundary.
+**Constraints carried over:**
+- Formal style, with no code shown in the report. Settings and parameters go in tables.
+- Hanoi only.
+- No re-crawling of challenged sites; a challenge is a hard stop.
+- Phone numbers are hashed only; never rotate `.project_salt`.
+- Build with XeLaTeX (Tectonic). On Overleaf, set the compiler to XeLaTeX.
+
+> **Note on the file name.** Comments in `src/clean/sample_schema.py` and `src/clean/dedup.py` cite "docs/PLAN.md Phase 3" as the original data roadmap. That file no longer exists here, so this plan does not replace it. If the old roadmap is restored, rename this file to `docs/REPORT_PLAN.md`.
 
 ---
 
-## Phase 0 — Project setup & ground rules
+## Phase 0: Prerequisites (blocking)
 
-**Tasks**
-- [ ] `git init`; add `.gitignore` (data/, .env, `__pycache__`, ipynb checkpoints, images/).
-- [ ] Create venv, `requirements.txt` / `pyproject.toml`, pin versions.
-- [ ] Repo skeleton (below).
-- [ ] `config/sources.yaml` — per-site: base URL, list-page pattern, pagination rule,
-      CSS/XPath selectors, rate limit, enabled flag.
-- [ ] Logging (`structlog` or stdlib) + a run-manifest per crawl (`run_id`, timestamp, counts).
-- [ ] Decide storage: raw HTML → gzip on disk; parsed rows → Parquet; serving → DuckDB.
-
-```
-fund-data-science/
-├─ docs/            PLAN.md, data_dictionary.md, report/
-├─ config/          sources.yaml, geo.yaml, params.yaml
-├─ src/
-│  ├─ crawl/        fetcher.py, spiders/<site>.py, image_downloader.py
-│  ├─ parse/        <site>_parser.py, normalize.py
-│  ├─ clean/        dedup.py, outliers.py, impute.py
-│  ├─ geo/          address_parser.py, geocode.py, admin_units.py
-│  ├─ features/     tabular.py, text.py, image.py, spatial.py
-│  ├─ eda/          plots.py, profile.py
-│  ├─ recsys/       content.py, hybrid.py, rank.py, evaluate.py
-│  └─ app/          streamlit_app.py, map.py
-├─ data/
-│  ├─ raw/          html/<site>/<date>/*.html.gz, images/<listing_id>/*.jpg
-│  ├─ interim/      parsed_<site>.parquet
-│  ├─ processed/    listings_clean.parquet, features.parquet, embeddings.npy
-│  └─ external/     vn_admin_boundaries.geojson, POI, price indices
-├─ notebooks/       01_eda_overview.ipynb ... 06_recsys_eval.ipynb
-├─ tests/
-└─ reports/figures/
-```
-
-**Deliverable:** runnable skeleton, `pytest` green on a smoke test.
-
----
-
-## Phase 1 — Source reconnaissance & crawl policy
-
-**Tasks**
-- [ ] For each candidate site: read `/robots.txt`, note Terms of Service, record allowed paths
-      and `Crawl-delay` in `docs/crawl_policy.md`.
-- [ ] Identify per site whether content is server-rendered (fast path: requests+lxml) or
-      JS-rendered (Playwright). Check for a hidden JSON API first — e.g. Chotot exposes
-      `gateway.chotot.com/v1/public/ad-listing?cg=1010&...`, far cheaper than HTML parsing.
-- [ ] Map the URL space: city → district → paginated list → listing detail.
-- [ ] Hand-collect 20 sample detail pages per site; write down every field visible.
-- [ ] Define the **canonical schema** (union of sites) → `docs/data_dictionary.md`.
-
-**Canonical schema (v1)**
-
-| field | type | notes |
+| # | Task | Done when |
 |---|---|---|
-| `listing_id` | str | `{source}_{site_native_id}` |
-| `source`, `url`, `crawled_at` | str/ts | provenance |
-| `title`, `description` | str | raw text, Vietnamese |
-| `price_vnd_month` | float | normalized from "3,5 triệu/tháng" |
-| `deposit_vnd`, `electricity_vnd_kwh`, `water_vnd` | float | often only in description |
-| `area_m2` | float | |
-| `room_type` | cat | phòng trọ / nhà nguyên căn / chung cư mini / ở ghép / căn hộ dịch vụ |
-| `n_bedrooms`, `n_bathrooms`, `floor`, `n_floors` | int | |
-| `address_raw` | str | as printed |
-| `street`, `ward`, `district`, `province` | str | parsed + normalized |
-| `lat`, `lon`, `geo_confidence` | float/cat | |
-| `amenities` | list[str] | wifi, điều hòa, gác lửng, nóng lạnh, chỗ để xe, tự do giờ giấc, khép kín… |
-| `furnishing` | cat | trống / cơ bản / đầy đủ |
-| `poster_type`, `poster_id_hash`, `phone_hash` | str | hashed, never store raw phone |
-| `posted_at`, `expires_at`, `n_views` | ts/int | if available |
-| `image_urls`, `n_images`, `image_paths` | list | |
-| **Tier 2 only** | | |
-| `tier` | cat | `classified` / `social` — carry everywhere, split every analysis by it |
-| `platform`, `group_id`, `group_name`, `permalink` | str | social provenance |
-| `post_type` | cat | offer / seeker / broker / noise (2B.3) |
-| `n_reactions`, `n_comments`, `n_shares` | int | engagement / demand signal |
-| `extraction_method`, `extraction_confidence` | cat/float | per-field; regex vs NER vs LLM |
-| `raw_text` | str | PII-stripped post body, kept for re-extraction |
+| 0.1 | Let scikit-learn run. Windows Application Control blocks `sklearn\svm\_liblinear*.pyd`. You need to allow it (or use a venv or conda env that is allowed); I will not bypass the control. | `python -c "import sklearn.linear_model"` succeeds |
+| 0.2 | Back up the current outputs: `report.tex`/`.pdf` → `*_v2.bak`, `data/unified_hanoi_rentals_dedup.csv` → `.bak-2026-10-07`, `data/models/` → `models.bak-2026-10-07` | backups exist |
+| 0.3 | Baseline test run | `python -m pytest tests -q` shows 83 passed (record any failures caused by 0.1) |
 
-### Recon results — measured 2026-09-09 (re-verify before Phase 2; defenses change)
-
-| Site | HTTP (plain UA) | Bot protection | robots.txt | Render | Verdict |
-|---|---|---|---|---|---|
-| **nha.chotot.com / nhatot.com** | 301→200 | Cloudflare CDN, **no challenge** | `Allow: /`, sitemap index published | **Public JSON API** | ⭐ **Primary** |
-| **phongtro123.com** | 200, 162 KB | Cloudflare CDN, **no challenge** | `Allow: /`, only query-params disallowed (`/api` blocked) | Server-rendered, 62 detail links/page | ⭐ **Primary** |
-| **alonhadat.com.vn** | 200, 129 KB | **None** (bare IIS/ASP.NET) | Minimal; only `/publish/*`, `can-mua`, `can-thue` blocked | Fully server-rendered (25 price + 34 area tokens in raw HTML) | ✅ Secondary |
-| **mogi.vn** | 200, 91 KB | Cloudflare CDN, no challenge | `Allow: /`, `/api/` + `/Property/` blocked; 4 sitemaps | Server-rendered, 51 detail links/page | ✅ Secondary |
-| **batdongsan.com.vn** | **403** `Cf-Mitigated: challenge` | **Cloudflare interstitial — blocks browser UA too; even `/robots.txt` is unreadable** | Cannot be read without solving the challenge | — | ❌ **Cut** |
-
-**Decision: drop batdongsan.com.vn.** You cannot read its crawl policy without defeating a bot
-challenge, and defeating it is out of scope (see 2B.0). Its rental stock also skews to
-apartments/houses, not phòng trọ — it is the wrong segment for this project anyway.
-
-### ⭐ Key finding — Chotot has a public structured API
-
-`GET https://gateway.chotot.com/v1/public/ad-listing?cg=<category>&limit=&o=&st=u`
-returns JSON with **82 fields per ad**, verified live:
-
-```
-subject, body, price (numeric!), price_string, size, deposit, rooms, toilets,
-furnishing_rent, street_name, ward_name, area_name (district), region_name,
-latitude, longitude,          <-- exact coordinates, free
-images[], number_of_images, list_time (epoch ms), account_id, seller_info,
-ad_features, params, pty_characteristics, ...
-```
-
-Consequences for the plan:
-- **Phase 4 geocoding largely disappears for this source** — coordinates ship with the data.
-  Reserve the geocoding cascade for phongtro123/mogi/alonhadat/social.
-- **Phase 3 price/area parsing is unnecessary here** — `price` and `size` arrive numeric.
-  Still build the parsers; the other sources need them.
-- `account_id` gives a clean broker/dedupe key without touching phone numbers.
-- **Operational caveat:** `total` caps at `10000` (Elasticsearch max result window), so a
-  single query cannot page past 10k ads. Slice the frontier by region × district × price band
-  to enumerate the full inventory.
-- [ ] Confirm the rental category codes (`cg=`) — 1010/1020/1050 all returned capped results;
-      identify which maps to phòng trọ vs. nhà/căn hộ cho thuê and record in `sources.yaml`.
-
-> ⚠️ **Compliance note:** Chotot's robots.txt carries
-> `Content-Signal: search=yes, ai-input=yes, ai-train=no` — an explicit publisher preference
-> against using the content to *train* models. Your project trains a price model, embeddings,
-> and a recommender. This is a stated preference rather than a hard legal prohibition, and
-> academic research sits differently from commercial training, but **raise it with your
-> supervisor and record the decision** in `docs/data_collection_ethics.md`. A defensible
-> posture: analysis + EDA freely, models trained for coursework only, no model weights or
-> derived dataset published.
-
-**Deliverable:** `config/sources.yaml` filled in + data dictionary + go/no-go per site.
+**Status (2026-10-07):**
+- 0.1 **BLOCKED.** `import sklearn.linear_model` still fails: "DLL load failed while importing _liblinear: An Application Control policy has blocked this file." Needs the user to allow `site-packages\sklearn\svm\_liblinear*.pyd` (or use an allowed environment).
+- 0.2 **Done.** Created `docs/latex/report_v2.tex.bak`, `docs/latex/report_v2.pdf.bak`, `data/unified_hanoi_rentals_dedup.csv.bak-2026-10-07`, `data/models.bak-2026-10-07/`.
+- 0.3 **Done, with the block.** 75 collected without `tests/test_ml.py`: 69 passed, 6 failed (all `tests/test_link_check.py` tests that import `prepare`, failing on the same sklearn DLL). `tests/test_ml.py` cannot even be collected. Not the expected 83 passed, so Phase 1 cannot be verified until 0.1 is resolved.
+- **`.venv` created** (Python 3.12.10, scikit-learn from a fresh wheel). The policy blocks `.venv\Lib\site-packages\sklearn\svm\_liblinear*.pyd` too, so the block is not tied to one path. Inside the venv the results are identical: 69 passed, 6 failed, `test_ml.py` not collectable. `requirements.txt` was missing `shapely` (used by `regeocode_fallback`), `matplotlib` (figures) and `pytest`; these are now added. `playwright` (only `src/crawl/browser_fetcher.py`) was left out on purpose.
+- **Resolved (2026-10-07):** the user allowed the sklearn files. Re-run in `.venv`: `python -m pytest tests -q` → **83 passed** in 110 s. **Phase 0 is complete.** Use `.venv\Scripts\python` for everything from here on.
 
 ---
 
-## Phase 2 — Crawler implementation
+## Phase 1: Fix the methods (code; each fix gets one test)
 
-**Tasks**
-- [ ] `fetcher.py`: session pooling, realistic UA, `robots.txt` obedience,
-      polite delay (1–3 s jittered) + concurrency cap (≤4 per host), exponential backoff on
-      429/5xx, per-host circuit breaker, resumable via a `seen_urls` SQLite table.
-- [ ] Stage A — **discovery**: walk list pages per city/district, collect detail URLs +
-      list-level snippets. Store URL frontier in SQLite (`status`: new/fetched/failed).
-- [ ] Stage B — **detail fetch**: download HTML/JSON, gzip to `data/raw/html/...`.
-      *Always keep raw* so parsing can be re-run without re-crawling.
-- [ ] Stage C — **image fetch**: for each listing download up to N=8 images, dedupe by URL,
-      convert to JPEG, resize longest side to 640 px, store `data/raw/images/<listing_id>/i.jpg`.
-      Record `content_length`, `sha256`, `width/height`, HTTP status.
-- [ ] Stage D — **parse**: per-site parser → canonical rows → `data/interim/parsed_<site>.parquet`.
-      Parsers must be pure functions of raw HTML so they're unit-testable on fixtures.
-- [ ] Incremental re-crawl job: re-visit listings weekly to capture price changes and
-      de-listing (gives a time dimension — valuable for EDA and for a "still available" filter).
-- [ ] `tests/`: golden-file tests — fixture HTML in, expected dict out, for each site.
+Each fix changes numbers that the report quotes, so all of Phase 1 must finish before Phase 2 measures anything.
 
-**Risks & mitigations**
-- Cloudflare / DataDome → Playwright with a real browser profile, slower rate, or drop the site.
-- Layout changes → parser tests fail loudly; keep raw HTML to reparse.
-- IP blocks → hard-lower the rate first; do not attempt evasion beyond polite crawling.
+| # | Fix | Where | Test | Fixes |
+|---|---|---|---|---|
+| 1.1 | **Remove the own-price leak.** Drop `log_price` from the area model, so the area estimate no longer uses the room's own price. Keep the `area_imputed` flag. Report MAPE separately for rooms with a stated area and rooms with an imputed one. | `src/recsys/price_model.py` (`add_area`, `add_fair_price`) | `area_est` for an imputed row does not change when only its `price_vnd` changes | CR 2.1 |
+| 1.2 | **Group the cross-validation folds.** Replace `KFold` with `GroupKFold`. The group is `phone_hash` when present, otherwise a cluster of coordinates rounded to about 50 m. Apply this to both models and to the median baseline. | `price_model.py` (`_oof`, `_group_median_oof`) | no group appears in both the training and test folds | CR 3.1 |
+| 1.3 | **Unify room types.** Map every spelling to one label set: Phòng trọ, Studio, Chung cư mini, Nhà nguyên căn, Ở ghép, Khác. Decide whether whole houses are in scope (recommended: keep them in the data but exclude them from the room recommender by default, and say so). | `src/pipelines/merge_fresh.py` (`finish`) plus the mapping in `src/clean/sample_schema.py` (reuse it, don't duplicate it) | the prepared data contains only the canonical labels | CR 2.3 |
+| 1.4 | **Sharpen duplicate detection across platforms.** Add a cross-platform rule: same `phone_hash` + price within 5% + within 150 m. Then hand-label 50 candidate pairs and report the precision of the rule. | `src/clean/sample_schema.py` (`mark_duplicates`) | a fixture pair from two platforms is merged; a different room from the same poster is not | CR 2.2 |
+| 1.5 | **Make `listing_id` unique.** Fix the 2 repeated Rencity ids. | `merge_fresh.py` (Rencity adapter) | `listing_id.is_unique` is true | CR 4 |
+| 1.6 | **Signed ranker coefficients.** Keep the clipped weights for ranking, but also save the standardised signed coefficients and bootstrap intervals for the report. | `src/recsys/ltr.py` (save only) | the JSON contains `coef_std` and `ci` | CR 2.5 |
+| 1.7 | **Add a stronger ranking baseline:** "nearest first", plus price fit and distance with equal weights. | `src/recsys/evaluate.py` / `ltr.py` evaluation | baseline row present | CR 2.4 |
+| 1.8 | **Delete or hash the raw-phone interim files.** Ask before deleting anything. | `data/interim/recrawl_2026-10/*.csv` | `grep` finds no 9–11 digit phone numbers | CR 3.8 |
 
-**Deliverable:** `python -m src.crawl.run --site phongtro123 --city hanoi --max-pages N`
-producing raw HTML, images, and a parsed Parquet; crawl stats logged.
+Rebuild: `python -m src.pipelines.merge_fresh && python -m src.recsys.prepare`, then run all tests (must pass).
+
+**Status (2026-10-07): Phase 1 complete.** `.venv` → **89 passed** (83 before + 6 new tests). Streamlit `AppTest` shows no exception. Data rebuilt: 9,281 rows, 7,167 distinct rooms.
+
+| # | Result |
+|---|---|
+| 1.1 | The fair-price model now uses the *stated* area (missing when unknown), not `area_est`. Test `test_own_price_does_not_leak_through_missing_area` fails on the old code and passes now. |
+| 1.2 | Folds are `GroupKFold(5)` by phone hash, else a ~50 m cell, for both models and both baselines (`cv_groups`). |
+| 1.1+1.2 effect | **Price MAPE 15.0% → 25.5%** (baseline 31.9% → 33.8%); MAE 0.67 M → 1.09 M VND. The leak alone accounts for 15.0 → 23.7 (random folds); grouping adds 1.8 points. Area stated: 22.4% vs 35.0%. Area missing: 28.8% vs 32.5%. Earlier Ridge, same 679 rows: ML 23.5% vs 30.4%. Area model: MAE 15.52 vs 15.60 m² (no real gain). |
+| 1.3 | `canonical_house_type` (in `sample_schema`, applied in `prepare` so Facebook is covered): Phòng trọ 7,735 · Studio 780 · Nhà nguyên căn 359 · Chung cư mini 296 · **Căn hộ** 110 (new label for 1–3 bedroom units, which the plan's list lacked) · Ở ghép 1. Whole houses stay in the data but are excluded from `recommend()` and the app unless selected (`whole_house=`). Facebook's "Phòng trọ / Khác" counts as Phòng trọ. |
+| 1.4 | Cross-site rule added (same phone hash + price ±5% + ≤150 m), with a test. **It found 0 new pairs.** Only 7 posters appear on 2+ sites (85 rows), and none of their rooms match on price and place. ChoTot/Rencity have no phone; Facebook's SHA-256 hashes are incompatible. Cross-platform duplicates: **6 of 2,114**. Hand-labelling 50 pairs is moved to Phase 2 (needs a person). |
+| 1.5 | Rencity returned 2 ads twice (overlapping API pages); `finish()` drops repeated ids for every source. `listing_id` is unique (tested on the prepared file). |
+| 1.6 | `ltr.signed_coefficients`: standardised, signed, 500-sample bootstrap over searches, saved in the report as `coef_std`. Engine weights are unchanged. The JSON gets it on the next `ltr` run (Phase 2). |
+| 1.7 | `nearest_first` and `price_plus_distance` baselines in `ltr.evaluate`/`per_search`, plus a note that the fixed orderings are scored on all searches and the learned one held-out. |
+| 1.8 | Raw phones in `data/interim/recrawl_2026-10/*.csv` and `*.json` replaced by the project hash (same salt, so the pipeline output is identical; Mogi hashes checked against the pre-hash set). Numbers in ad text redacted. Nothing deleted. Phone-like strings left are hash or image-name false positives. The crawl logs still show numbers inside the ads' public URLs (the site puts them there); left as is. |
+
+**Found and fixed along the way (not in the original plan):**
+- **3,552 descriptions in the prepared data (mostly Facebook) contained raw phone numbers**, shown by the app. `prepare.redact_phones` now replaces them with "[SĐT ẩn]" in titles and descriptions, with a test on the prepared file. Poster first names written in the text ("Zalo Phương", "Chị Loan") are **not** removed; that needs a separate step.
+- **Mogi and Phongtro123 phone hashes were all missing:** pandas read the numbers as integers and `hash_phone` dropped non-strings. `hash_phone` now accepts numbers, and the adapters read phone columns as text. Coverage went from 0% to 100% for both.
+
+**Consequence for Phase 2/3:** the headline "15.0%, less than half the baseline" no longer holds. Under the decision rule (25.5 / 33.8 = 0.75, above 0.6), the wording becomes **"a modest improvement over a median rule (25.5% vs 33.8%)"**.
 
 ---
 
-## Phase 2B — Social sources (Facebook groups, Threads)
+## Phase 2: Re-measure (numbers the report will quote)
 
-In Vietnam a large share of real rental supply never reaches classifieds — it lives in
-Facebook groups (*"Tìm phòng trọ Hà Nội"*, *"Nhà trọ sinh viên …"*) and increasingly on
-Threads. This tier is worth having, but it is a **different problem**: no fields, no schema,
-just free text + photos in a comment thread. Budget it as an *information-extraction*
-sub-project, not as more crawling.
+Record every result in `docs/RECSYS_FINAL_REPORT.md` §10 first, then copy it into LaTeX. That gives one source of truth.
 
-### 2B.0 — Access route (decision gate — settle this BEFORE writing code)
-
-| Route | What you get | Cost / constraint | Verdict |
+| # | Measurement | Command / method | Replaces in the report |
 |---|---|---|---|
-| **A. Meta Content Library API** | Public FB Pages/Groups + Threads content, first-party, sanctioned | Academic-institution application via ICPSR; approval takes weeks–months; data is analysed **inside Meta's secure sandbox** — you generally cannot export raw rows or images into a local pipeline | The *legitimate* route. Verify current Threads coverage + export rules. Sandbox restriction may make it unusable for this project's image pipeline |
-| **B. Graph API on a group you administer** | Full content of *your own* group | Must be group admin + approved Meta app; the open Groups read API was largely removed in 2021 | Clean and legal if you (or a course partner) admin a suitable group. Small n |
-| **C. Manual / browser-assisted collection** | Anything you can see logged in | ToS violation; account-ban risk on *your* account; rate must stay human-scale; third-party scrapers (Apify actors, `facebook-scraper`) outsource the violation, don't remove it | Pragmatic for a few thousand posts. Use a throwaway-risk-tolerant account, never automate faster than a human, accept it may stop working |
-| **D. Consented / self-collected** | Posts you or classmates author or export; group admin's blessing | Slow, tiny n | Good for building the *gold-standard labelled set* (2B.3) |
+| 2.1 | Price MAPE/MAE overall, split by stated vs imputed area, and by source; bootstrap 95% CI | `python -m src.recsys.price_model --report` (+ CI) | Summary, Table 3, Figure 4, §6, §8 |
+| 2.2 | Area MAE with CI; drop the model if the CI includes no gain | same | Table 3, §3.3 |
+| 2.3 | Share of rooms labelled fair, bargain and premium after the fix | prepared data | §3.2 |
+| 2.4 | Duplicates: same-platform vs cross-platform counts, and rule precision on 50 labelled pairs | prepared data + labelling sheet | Summary, §2.3, Figure 2 |
+| 2.5 | Ranker: signed coefficients with CI; nearest-first baseline; state that the hand-set weights were scored without training | `python -m src.recsys.ltr` (no `--force`) | Table 4, Table 5, Figures 7 and 9 |
+| 2.6 | Link check: add Wilson 95% intervals; spot-check 25 Facebook links by hand and record the result | `python -m src.crawl.verify_sample … --n 25` + manual sheet | Table 6, Summary |
+| 2.7 | Freshness: dated share by source, and the age distribution of dated rooms | prepared data | §2.1, §7 |
 
-- [ ] Pick a route, record it and its justification in `docs/data_collection_ethics.md`.
-- [ ] Check USTH's research-ethics requirement for human-subject/personal data before collecting.
-- [ ] **Fallback plan:** if no route is viable, Phase 2B is cut and Tier 1 carries the project.
-      Nothing downstream may depend on Tier 2 existing.
-
-**Explicitly out of scope:** proxy rotation, browser-fingerprint spoofing, CAPTCHA solving,
-account pools, or any other measure whose purpose is to avoid detection. If a source can only
-be collected that way, drop the source.
-
-### 2B.1 — Collection
-
-- [ ] Define the group/hashtag frontier: 10–30 FB groups by city, Threads hashtags
-      (`#phongtro`, `#chothuephong`, `#timphongtro`) + keyword search.
-- [ ] Capture per post: `post_id`, `group_id`/`group_name`, `posted_at`, `text`,
-      `image_urls`, `n_reactions`, `n_comments`, `n_shares`, `poster_id`, `permalink`.
-- [ ] Capture **comments** too — in FB groups price negotiation, "còn phòng không?",
-      and the actual address often live in comments, not the post body.
-- [ ] Human-scale pacing: ≤1 request per 3–5 s, session breaks, no overnight unattended runs.
-- [ ] Persist raw JSON/HTML exactly as fetched to `data/raw/social/<platform>/<date>/`.
-
-### 2B.2 — PII boundary (do this at ingest, before anything is written to disk)
-
-- [ ] `src/crawl/pii.py` runs on every record *before* persistence:
-      phone → `sha256(phone + PROJECT_SALT)`, keep `phone_prefix` (carrier) only;
-      poster name/id → salted hash; strip emails, Zalo IDs, profile URLs, avatar URLs.
-- [ ] Keep a **local-only, gitignored, never-published** `id_map` if you need reversibility;
-      otherwise don't keep one.
-- [ ] Face handling in images: either skip images from Tier 2 entirely (simplest, recommended),
-      or run a face detector and blur before storage. Never publish Tier 2 images in the report.
-- [ ] Publishable artefact = aggregate statistics and hashed ids only.
-
-### 2B.3 — Information extraction (the real technical work)
-
-A typical group post has zero structure:
-
-```
-CHO THUÊ PHÒNG TRỌ NGÕ 173 HOÀNG HOA THÁM
-- DT 25m2 có gác xép, khép kín
-- Giá 3tr5/th, điện 4k/số, nước 100k/người
-- Full đồ, máy giặt chung, tự do giờ giấc
-- LH: 09xx.xxx.xxx
-```
-
-Build a cascade into the **same canonical schema as Tier 1**:
-
-1. **Rule/regex baseline** — price (`3tr5`, `3.5tr`, `3triệu5`, `3500k`), area (`25m2`, `DT 25`),
-   utilities (`điện 4k/số`), phone, amenity lexicon. Cheap, high precision, low recall.
-2. **Vietnamese NER** for locations — `underthesea` / PhoBERT-based tagger to pull
-   street / ngõ / ward / district mentions out of prose.
-3. **LLM extraction pass** — few-shot prompt with the canonical JSON schema over each post.
-   This is the right tool for noisy Vietnamese free text at this n (a few thousand posts is
-   cheap). Force strict JSON output, validate against a Pydantic model, reject and retry
-   malformed rows.
-4. **Ensemble & confidence** — take the regex value when it fires, LLM otherwise; disagreement
-   between the two flags the row for review. Store `extraction_method` + `extraction_confidence`
-   per field so EDA can filter on them.
-5. **Gold set & evaluation** — hand-label **300 posts** (route D is fine for this).
-   Report **per-field precision / recall / F1** (price, area, district, amenities) and only
-   admit fields that clear an agreed threshold (e.g. F1 ≥ 0.85) into the modelling dataset.
-   *This evaluation table is a headline result of the project — it is what makes Tier 2
-   defensible rather than decorative.*
-- [ ] Post-type classifier: is this an **offer**, a **seeker** ("cần tìm phòng…"), a broker
-      ad, or noise? Seeker posts are not supply — but they are a superb **demand signal**
-      for the recommender and for EDA (Phase 6.8/6.11).
-
-### 2B.4 — What Tier 2 adds that Tier 1 cannot
-
-- **Demand side**: seeker posts → what budget/area/district people actually ask for.
-- **Engagement**: reactions/comments as a proxy for listing attractiveness and market heat.
-- **Freshness**: group posts lead classifieds by days.
-- **Informal supply**: rooms that never appear on any classified site.
-- **Negotiation signal**: comment threads reveal gap between asking and agreed price.
-
-**Deliverable:** `data/interim/social_posts.parquet` (PII-hashed) +
-`data/processed/social_extracted.parquet` conforming to the canonical schema +
-`reports/extraction_eval.md` with the per-field F1 table + `docs/data_collection_ethics.md`.
+**Decision rules (decide the wording in advance so the results can't steer it):**
+- If price MAPE stays below about 0.6 × baseline, keep "substantially better than a median rule".
+- If the leak or grouping moves it close to the baseline, rewrite the claim as "modest improvement" and make it a key finding.
+- If the fair band (±15%) is smaller than the error for a segment, the app and the report show the price hint only for |value| above that segment's error.
+- If the learned ranker does not beat the hand-set weights or nearest-first, the report states "learning did not improve on a hand-set formula on AI labels". No softer phrasing.
+- If real votes are collected (Phase 6), re-run 2.5 and replace the AI-label results.
 
 ---
 
-## Phase 3 — Normalization & cleaning
+## Phase 3: Correct the existing text (claim by claim)
 
-**Tasks**
-- [ ] **Price parsing**: `"3,5 triệu/tháng"`, `"3.500.000đ"`, `"350 nghìn"`, `"Thỏa thuận"`,
-      `"$200"` → VND/month float + `price_is_negotiable` flag. Unit-test the parser hard.
-- [ ] **Area parsing**: `"25m2"`, `"25 m²"`, `"20-25m2"` → float (+ `area_is_range`).
-- [ ] **Text normalization**: Unicode NFC, strip emoji/decorative box chars, collapse
-      whitespace, keep Vietnamese diacritics; also store an ASCII-folded copy for matching.
-- [ ] **Address normalization**: map to official admin units. ⚠️ Vietnam reorganized its
-      provincial/commune structure in 2025 (63 → 34 provinces, district level dissolved) — store
-      **both** the legacy district label found in listings and the current admin code, with a
-      crosswalk table in `data/external/`. Do not assume listing text uses the new units.
-- [ ] **Amenity extraction** from free text: curated Vietnamese keyword/regex lexicon
-      (`khép kín`, `tự do giờ giấc`, `gác xép`, `ban công`, `máy giặt`, `thang máy`, `chung chủ`…)
-      → multi-hot columns. Manually validate on a 200-row sample; report precision/recall.
-- [ ] **Missing values**: quantify per column; impute only where defensible
-      (e.g. `n_bedrooms=1` for phòng trọ), never impute the target price — flag and drop.
-- [ ] **Outliers**: price/m² winsorization by district; explicit rules for obvious
-      typos (price < 200k or > 100M VND/month, area < 5 or > 500 m²). Keep an
-      `is_outlier` + `outlier_reason` column rather than silently deleting.
-
-### Deduplication (a core deliverable — do it in layers)
-1. **Exact**: same `source` + native id; same canonical URL.
-2. **Near-exact text**: MinHash/SimHash over normalized `title + description`
-   (shingles of 5 tokens), LSH bucketing, Jaccard ≥ 0.85 → candidate pair.
-3. **Attribute match**: same normalized address (or lat/lon within 50 m) **and**
-   |area diff| ≤ 1 m² **and** |price diff| ≤ 5% → candidate pair.
-4. **Image match**: perceptual hash (pHash + dHash, 64-bit) over every image;
-   Hamming distance ≤ 6 between any image of A and any of B → strong duplicate signal.
-   This is what catches the same room reposted with rewritten text across sites.
-5. **Cross-post match (Tier 2)**: brokers post the *same room to 10+ groups* within minutes,
-   with shuffled text. Add: same `phone_hash` **and** |price diff| ≤ 5% **and**
-   |area diff| ≤ 1 m² **and** posted within 7 days → candidate pair. `phone_hash` is the
-   single strongest dedupe key in social data — this is why Phase 2B.2 hashes rather than
-   discards it.
-6. **Resolution**: build a graph of candidate pairs, take connected components, pick a
-   canonical record per cluster (most fields filled → most recent → Tier 1 preferred over
-   Tier 2); keep `cluster_id`, `n_duplicates`, `duplicate_sources`, `n_groups_posted_to`
-   as features (repost breadth signals a broker; repost frequency signals a hard-to-rent room).
-- [ ] Report: how many dupes each layer caught, and a manually-checked 100-pair sample
-      with precision/recall of the dedupe. Report Tier 1↔Tier 2 overlap separately — the
-      share of social posts that also appear on classifieds is itself a finding.
-
-**Deliverable:** `data/processed/listings_clean.parquet` + `reports/cleaning_report.md`
-(before/after row counts, per-rule drop counts, dedupe stats).
-
----
-
-## Phase 4 — Geocoding & spatial enrichment
-
-**Tasks**
-- [ ] Geocode `address_raw` → lat/lon. Cascade: (1) coordinates already in the page/JSON,
-      (2) local gazetteer of VN streets/wards, (3) Nominatim (1 req/s, cache every response
-      to SQLite) or Goong/Mapbox API if a key is available. Record `geo_confidence`
-      (exact / street / ward / district centroid) — never silently pass off a district
-      centroid as a rooftop coordinate.
-- [ ] Reverse-check: geocoded point must fall inside the claimed district polygon; else flag.
-- [ ] Load admin boundaries GeoJSON (province/ward) into `data/external/`.
-- [ ] POI layer: universities (USTH, HUST, VNU, FTU…), hospitals, industrial parks,
-      metro/BRT stops, big markets, CBD centroids. Source: OSM extract for Vietnam.
-- [ ] Spatial features: distance to CBD, to nearest university, to nearest metro stop,
-      to nearest hospital; H3 hex cell id (res 8/9) for aggregation; k-NN neighbour price
-      statistics (median price/m² of 20 nearest listings, leakage-safe: exclude self).
-
-**Deliverable:** geocoded Parquet + a first Folium map of listing density; geocode
-success-rate table by city and confidence level.
-
----
-
-## Phase 5 — Feature engineering & extraction
-
-**5A. Tabular / derived**
-- `price_per_m2`, `log_price`, `price_vs_district_median`, `price_percentile_in_ward`.
-- `total_monthly_cost` = rent + est. electricity/water (parsed or district median).
-- Rooms per m², `is_shared`, `has_private_bathroom`, `is_ground_floor`, `is_top_floor`.
-- Temporal: `posted_month`, `day_of_week`, `days_listed`, `is_reposted`, `n_price_changes`
-  (from the weekly re-crawl), season flags (academic year start Aug–Sep spikes demand).
-- Target encoding / frequency encoding of ward & street (fit on train fold only).
-
-**5B. Text features (Vietnamese)**
-- Length, token count, uppercase ratio, emoji count, has-phone, has-price-in-text,
-  ALL-CAPS-shout score → proxies for listing quality/professionalism.
-- TF-IDF (word 1–2 gram, with `underthesea`/`pyvi` word segmentation) → SVD to 50–100 dims.
-- Sentence embeddings: `keepitreal/vietnamese-sbert` or multilingual E5 → 384/768-d vectors
-  (this is the backbone of content-based recommendation).
-- Topic model (LDA or BERTopic) → interpretable listing themes for EDA.
-
-**5C. Image features**
-- Quality: resolution, blur (variance of Laplacian), brightness, colorfulness, aspect ratio,
-  is-watermarked heuristic, count of images per listing.
-- Content: CLIP (ViT-B/32) embeddings per image → mean-pool per listing (512-d).
-- Zero-shot CLIP scene tagging: {bedroom, bathroom, kitchen, balcony, exterior/alley,
-  floor plan, empty room, furnished room} → per-listing scene coverage flags.
-- Optional supervised head: hand-label 500 images "furnished vs empty" / "clean vs cluttered",
-  train a small classifier on CLIP features, propagate labels.
-- Image-derived listing score = f(n_images, avg quality, scene coverage) — test whether it
-  correlates with price and with days-listed.
-
-**5D. Dimensionality & selection**
-- PCA/UMAP for visualization; mutual information + permutation importance for selection.
-- Assemble `data/processed/features.parquet` with a documented column list and
-  a `feature_spec.yaml` recording every transform (so it's reproducible at serve time).
-
-**Deliverable:** feature matrix + `docs/feature_catalog.md` describing each feature,
-its rationale, and its computation.
-
----
-
-## Phase 6 — Exploratory Data Analysis (go deep)
-
-Organize as numbered notebooks, each exporting figures to `reports/figures/`.
-
-1. **Data quality overview** — row/column counts, missingness heatmap, dtype audit,
-   duplicates removed per layer, crawl coverage by city/district/source, collection timeline.
-2. **Univariate** — distributions of price, area, price/m², n_images; log transforms;
-   skew/kurtosis; heavy-tail check (log-normal vs power law fit for price).
-3. **Bivariate** — price vs area (scatter + LOWESS, by room type); price vs district;
-   price vs distance-to-CBD/university; correlation matrix (Spearman for monotone).
-4. **Geospatial** — choropleth of median price/m² by ward; H3 hexbin heatmaps; listing
-   density vs price; hotspot detection (Getis-Ord Gi*); Moran's I for spatial autocorrelation
-   (justifies using spatial features in the model).
-5. **Segmentation** — clustering (K-Means / HDBSCAN on scaled tabular + embeddings) →
-   name the segments ("cheap student room near university", "serviced apartment CBD",
-   "shared room", "mini-apartment with elevator"); profile each segment.
-6. **Text analysis** — top n-grams by segment, amenity co-occurrence matrix,
-   word clouds per price quartile, topic model results.
-7. **Image analysis** — image-count distribution, quality vs price, scene composition by
-   segment, sample grids per cluster, CLIP-embedding UMAP colored by price decile.
-8. **Temporal** — postings per week, seasonality, price drift, days-on-market survival
-   curves (Kaplan–Meier) by price bucket and district.
-9. **Market pricing model as an EDA tool** — fit gradient boosting (LightGBM/XGBoost) to
-   predict log price; use SHAP to quantify what actually drives price; residual analysis to
-   surface **underpriced/overpriced listings** (this becomes a recommender feature).
-10. **Tier comparison (social vs classified)** — does Facebook/Threads supply differ from
-    classifieds in price, area, district mix, informality? Selection bias analysis: who posts
-    where. Extraction-quality caveats applied to every Tier 2 chart (always split by `tier`,
-    never silently pool them).
-11. **Demand side (Tier 2 only)** — seeker posts: budget distribution people *ask* for vs
-    prices *offered*, by district; the supply–demand gap map; engagement (reactions/comments)
-    vs price and vs days-listed; market heat by group and by week.
-12. **Findings memo** — 10–15 stated, evidence-backed findings with the figure that proves each.
-
-**Deliverable:** notebooks 01–11 + `reports/eda_findings.md` + a figure pack.
-
----
-
-## Phase 7 — Recommendation system
-
-**Framing.** No user-interaction logs exist at the start, so this is a **cold-start,
-content-based + constraint-filtering** problem, upgraded to hybrid once the app collects
-implicit feedback.
-
-**7.1 Baselines**
-- Popularity / recency within a filtered set.
-- Hard-filter + sort by value score (predicted price − actual price from Phase 6.9).
-
-**7.2 Content-based core**
-- Item vector = concat(scaled tabular, text SBERT, image CLIP, spatial) with per-block weights.
-- Similarity: cosine on L2-normalized blocks; ANN index via FAISS/hnswlib for speed.
-- "More like this" from any listing; "matches my profile" from a user-supplied query form
-  (budget, area, preferred district/workplace, must-have amenities, commute tolerance).
-- Natural-language query → SBERT embed the query → retrieve (semantic search in Vietnamese).
-
-**7.3 Constraint & geo layer**
-- Hard filters: budget ceiling, min area, required amenities, max commute distance.
-- Commute-aware scoring: user gives a work/study address → isochrone or haversine/OSRM
-  travel time; score decays with travel time.
-- Diversity: MMR re-ranking so results aren't 10 rooms in the same building; cap per building/poster.
-
-**7.4 Hybrid / learning-to-rank (once feedback exists)**
-- Log clicks/saves/contacts in the app → implicit-feedback matrix.
-- ALS or LightFM (hybrid, uses item features → handles cold start), or a LambdaMART re-ranker
-  over candidate sets from 7.2.
-
-**7.5 Evaluation**
-- Offline proxy: hold out listings, treat same-cluster/same-user-saved items as relevant;
-  Precision@k, Recall@k, MAP, NDCG@10, coverage, intra-list diversity, novelty.
-- Cold-start ablation: text-only vs image-only vs tabular-only vs full.
-- Human eval: 30 query scenarios, 3 annotators rate top-10 relevance 0–2 → report agreement.
-- A/B-ready hooks in the app for later online evaluation.
-
-**Deliverable:** `src/recsys/` with a `recommend(query, k) -> ranked listings` API,
-an evaluation notebook, and a results table comparing all variants.
-
----
-
-## Phase 8 — Interactive map application
-
-**Tasks**
-- [ ] Streamlit app (`src/app/streamlit_app.py`) with: filter sidebar, Folium/pydeck map of
-      Vietnam, marker clustering, price choropleth toggle, listing cards with image carousel.
-- [ ] "Set my workplace" pin → commute-time isochrone overlay → re-rank recommendations live.
-- [ ] Detail panel: attributes, images, price-vs-market gauge (SHAP-explained: *why* this
-      price), similar listings row.
-- [ ] Heatmap layers: median price/m², listing density, value score (bargain map).
-- [ ] Feedback capture (like / dislike / save) written to a local table → feeds Phase 7.4.
-- [ ] Performance: precompute embeddings + ANN index, cache with `@st.cache_data`,
-      serve tiles from DuckDB; keep p95 interaction < 1 s.
-
-**Deliverable:** locally runnable app + a recorded demo GIF + deployment notes
-(Streamlit Community Cloud / HF Spaces, with the dataset trimmed to fit).
-
----
-
-## Phase 9 — Reproducibility, documentation, report
-
-- [ ] Makefile / `invoke` tasks: `crawl → parse → clean → geocode → features → train → app`.
-- [ ] `README.md`: what, how to run, screenshots, results summary.
-- [ ] `docs/data_dictionary.md`, `docs/feature_catalog.md`, `docs/crawl_policy.md`.
-- [ ] Data card + ethics section: source, robots/ToS compliance, rate limits, personal-data
-      handling (phones hashed, no re-identification), known biases (urban skew, listings ≠
-      transactions, asking price ≠ agreed price, duplicate/spam agent posts).
-- [ ] Final report: problem → data → methods → EDA findings → recsys design → evaluation →
-      limitations → future work. Slides + demo.
-- [ ] Tag `v1.0`, archive dataset snapshot (Parquet + checksums).
-
----
-
-## Suggested timeline (adjust to your course deadlines)
-
-| Week | Focus | Exit criterion |
+| Section | Change | Fixes |
 |---|---|---|
-| 1 | Phase 0–1 + **2B.0 access decision** (start the ethics/API application *now* — it is the long pole) | Skeleton + sources.yaml + data dictionary + Tier 2 route chosen |
-| 2–3 | Phase 2 | ≥10k listings + images crawled, parsers unit-tested |
-| 3–4 | Phase 2B.1–2B.2 (parallel with above) | Social posts collected, PII boundary tested |
-| 4–5 | Phase 2B.3 | IE cascade + 300-post gold set + F1 table |
-| 5 | Phase 3 | Clean Parquet + cleaning report, dedupe validated (incl. cross-post) |
-| 6 | Phase 4 | ≥85% geocoded with confidence labels, first map |
-| 7 | Phase 5 | features.parquet + embeddings built |
-| 8–9 | Phase 6 | 12 notebooks + findings memo (the graded EDA core) |
-| 10–11 | Phase 7 | Content-based recommender + evaluation table |
-| 12 | Phase 8 | Working map app |
-| 13 | Phase 9 | Report, slides, demo |
+| Executive summary | "learns from users'" → "is designed to learn from users'; trained so far on AI-assigned votes". Drop "clearly outperforms"; report the comparison with the hand-set weights. Use the new MAPE. "Cross-platform merge" → "reposts removed; N cross-platform". Say that half the data is earlier Facebook data. | CR 2.2, 2.4, 3.5 |
+| 1.4 Scope | "irreversible hashes" → "salted pseudonymous hashes". Add terms of service and Facebook provenance (see 4.3). | CR 3.8, 3.9 |
+| 2.1 Data | Facebook is 50% of rows and undated. The 180-day filter only applies to dated rows (38% of rooms). | CR 3.5 |
+| 2.3 Preparation | Describe the new duplicate rule and its measured precision. | CR 2.2 |
+| Figure 2 | Caption and figure: split the duplicates into same-platform and cross-platform. | CR 2.2 |
+| 3.2 Fair price | Explain how area enters the model without leaking price, and the grouped folds. Add the price interval or the "show hint only when clear" rule. | CR 2.1, 3.1, 3.2 |
+| 3.3 Area | Report the CI; say whether the model is kept. Add that unknown-area rooms pass the minimum-area filter, and how the app shows this. | CR 3.3, 3.4 |
+| 3.5 Ranking | Explain that coefficients are clipped and why "value = 0" may be a negative association. State the provenance of the forced publication precisely. | CR 2.5, 4 |
+| Table 3 row 3 | Relabel the column "earlier model (in-sample)", or drop the row. | CR 4 |
+| Table 5 / §5.2 | Add the nearest-first row. Put the caveats (AI labels, old data, 100 of 250 rooms remain) in the caption, not only in §5.4. | CR 2.4 |
+| Table 6 | Add the n and the Wilson interval. Add a Facebook row (manual check). | CR 3.6 |
+| Figure 3 | Mark the feedback loop as "designed, not yet run with users". | CR 4 |
+| §7 Limitations | Connect ward-level coordinates to the distance filter. Remove "estimated total living cost" from the app, or say it is rent + a constant. | CR 3.7, 4 |
 
-## Risk register
+---
 
-| Risk | Impact | Mitigation |
+## Phase 4: Enhancements (new content)
+
+| # | New section | Content (no code) | Length |
+|---|---|---|---|
+| 4.1 | **Related work** (new §2, after the Introduction) | Hedonic rent models; housing recommenders; learning to rank (pointwise logistic regression vs LambdaMART); how existing platforms (Nhatot, Mogi, Batdongsan) search and price. 8–12 new references. | 1 page |
+| 4.2 | **Error analysis** (in the Evaluation section) | Price error by source, district and room type (table + one figure); the 10 worst predictions and why (free-text prices, whole houses, per-bed ads); a map of the residuals | 1–1.5 pages |
+| 4.3 | **Ethics, privacy and legal considerations** | Decree 13/2023/NĐ-CP (pseudonymised vs anonymised data); robots.txt vs terms of service; Facebook data provenance and its limits; fairness of demoting female-only or sublet ads; what is stored and for how long | 1 page |
+| 4.4 | **Uncertainty everywhere** | A CI for each headline metric; a short "how to read the intervals" paragraph | in place |
+| 4.5 | **Reproducibility appendix** | Tables of the data snapshot date, software versions, model hyperparameters (400 trees, learning rate 0.05, L2 1.0, seed 0), fold scheme, personas, run order of the pipeline stages, in prose | 1 page |
+| 4.6 | **Team contributions** (appendix) | Who did what. **You must supply this**; I will not invent it. | ½ page |
+| 4.7 | **Statement on AI assistance** (front matter) | Where an AI assistant was used: code, labelling votes, drafting the report; and how the team checked its output | ¼ page |
+| 4.8 | **Threats to validity**, expanded | Selection bias from hand-set candidates; 10-search bootstrap; cross-site duplicates remaining; ward-level geocoding | in place |
+| 4.9 | Optional: **user pilot** | If 5+ people use the app for 15 minutes each: votes, a SUS questionnaire, quotes. Turns "no real users" into evidence. | 1 page |
+
+Front matter, if you provide the details: supervisor, course code and name, and a signed declaration of originality.
+
+---
+
+## Phase 5: Figures
+
+Regenerate with `python -m src.recsys.make_slide_figures` and copy into `docs/latex/figures/`.
+
+| Figure | Change |
+|---|---|
+| m2_data_sources | Add a "dated share" panel |
+| m3b_dedup | Split same-platform vs cross-platform |
+| m4_price_model | New numbers; colour by stated vs imputed area |
+| m6_ranker_learned | Signed standardised coefficients with error bars, instead of clipped weights |
+| m7_evaluation | Add the nearest-first bar; keep the "AI labels, old data" caption |
+| **new** error_by_segment | MAPE by source, district and type (Phase 4.2) |
+| **new** residual_map | Map of price residuals, crediting "© OpenStreetMap contributors" |
+| m1_pipeline | Feedback arrow dashed, labelled "designed" |
+
+Each figure needs a caption that stands alone, axis units (VND/month, m², km), and readable greyscale output.
+
+---
+
+## Phase 6 (optional, highest value): real feedback
+
+1. Deploy the app locally or on Streamlit Cloud with `RECSYS_FEEDBACK_DB` pointing to a fresh database.
+2. Recruit 5 or more classmates. Each person runs 2 searches and votes on about 20 rooms, which reaches 200 votes from 5 sessions.
+3. Train with `python -m src.recsys.ltr` without `--force`; it publishes only if the learned weights win on held-out searches.
+4. Replace the AI-label results in Table 5 and Figure 9. Keep the AI-label results as a secondary comparison.
+
+---
+
+## Phase 7: Build and quality checks
+
+| Check | How |
+|---|---|
+| Compiles cleanly | `tectonic report.tex` in `docs/latex`; no undefined references or overfull boxes over 10 pt |
+| Numbers consistent | Every number in the PDF appears in `RECSYS_FINAL_REPORT.md` §10; cross-check with a script over the extracted PDF text |
+| No code shown | No verbatim or listing blocks, no file paths or commands in the body (the appendix may name tools) |
+| Visual check | Render all pages to PNG and inspect: title page, contents on one page, figures readable, no widow headings |
+| Claims audit | Re-read `COUNTER_REPORT.md`; mark each item fixed, rebutted with evidence, or accepted as a limitation |
+| Length | Target 20–24 pages, up from 16 |
+| Docs in sync | Update `SLIDES_SCRIPT.md` and `SLIDES_PLAN.md` with the new numbers |
+
+---
+
+## Order and effort
+
+| Step | Depends on | Effort |
 |---|---|---|
-| Anti-bot blocks main source | High | Multi-source design; Chotot JSON API fallback; polite rates; drop a site rather than evade |
-| **Meta blocks / bans account (Tier 2)** | High | Tier 2 is strictly additive — Tier 1 must carry the project alone; human-scale pacing; use an account you can afford to lose; accept the source may die mid-project |
-| **Meta Content Library sandbox blocks export** | High | Verify export rules *before* choosing route A; if raw rows can't leave the sandbox, fall back to route B/C/D or cut Tier 2 |
-| **PDP Law / ethics non-compliance** | High | Hash PII at ingest boundary; no raw phone/name/avatar on disk; ethics note in report; get USTH sign-off before collecting |
-| **IE extraction quality too low** | Medium | Gold set of 300 posts; admit only fields with F1 ≥ 0.85; carry `extraction_confidence` into every downstream analysis |
-| Broker spam floods Tier 2 | Medium | `phone_hash` cross-post dedupe; post-type classifier drops broker/noise; cap posts per poster |
-| Geocoding quality in VN | High | Confidence tiers; boundary sanity check; never treat centroid as exact |
-| 2025 admin-unit reform mismatch | Medium | Store legacy + current codes with a crosswalk |
-| Price text chaos ("thỏa thuận") | Medium | Explicit negotiable flag; exclude from price models |
-| Image storage size | Medium | Cap 8 imgs/listing, resize 640 px, JPEG q80 |
-| No user feedback for recsys | High | Cold-start content-based design from day 1; feedback capture in app |
-| Scope creep | High | Phases 0–6 are the deliverable; 7–8 are the stretch |
+| Phase 0 | — | you: a few minutes |
+| Phase 1 (1.1–1.7) | 0 | ~half a day |
+| Phase 2 | 1 | ~2 hours, plus labelling 50 duplicate pairs and 25 Facebook links (~1 hour by hand) |
+| Phase 3 | 2 | ~2 hours |
+| Phase 4 (4.1–4.5, 4.7, 4.8) | 2 | ~half a day |
+| Phase 5 | 2 | ~1 hour |
+| Phase 7 | 3–5 | ~1 hour |
+| Phase 6 | app deployed | 1–3 days, depending on people |
 
-## Open questions to settle before Phase 1
-
-1. **Which Tier 2 route (A/B/C/D)?** This is the long pole — route A needs an institutional
-   application started in week 1. Everything in Phase 2B branches on it.
-2. Are you (or a classmate) an admin of any rental Facebook group? That unlocks route B.
-3. Does USTH require research-ethics review for collecting personal data? Ask the course
-   supervisor before collecting, not after.
-4. Which cities and how many listings do you actually need for the course scope?
-5. Do you have (or can you get) a Goong/Mapbox geocoding key, or is Nominatim-only acceptable?
-6. GPU available for CLIP/SBERT, or should image/text features stay CPU-light?
-7. Is the deliverable a report + notebooks, or must the app be deployed publicly?
-   (If it is public, Tier 2 data almost certainly cannot ship with it.)
+**Needed from you:** (1) unblock scikit-learn (0.1); (2) approval to delete the raw-phone files (1.8); (3) the scope decision on whole houses (1.3); (4) team contributions, supervisor and course details (4.6); (5) whether to run the user pilot (4.9 / Phase 6).

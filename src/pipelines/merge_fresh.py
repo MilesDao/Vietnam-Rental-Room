@@ -65,15 +65,18 @@ def _text_features(d):
     return d
 
 
+PHONE_COLS = {c: str for c in ("contact_phone", "contact_zalo", "phone_number", "alternative_phone")}
+
+
 def mogi(p):
-    d = pd.read_csv(p, low_memory=False)
+    d = pd.read_csv(p, low_memory=False, dtype=PHONE_COLS)
     d["listing_id"] = d.listing_id.astype(str).map(lambda i: i if i.startswith("mogi_") else "mogi_" + i)
     d["description"] = ""
     return d
 
 
 def alonhadat(p):
-    d = pd.read_csv(p, low_memory=False)
+    d = pd.read_csv(p, low_memory=False, dtype=PHONE_COLS)
     d["district"] = d.district.str.replace(PREFIX, "", regex=True)
     d["ward"] = d.ward.fillna("").str.replace(WARD_PREFIX, "", regex=True)
     d["listing_id"] = d.listing_id.astype(str).map(lambda i: i if i.startswith("alonhadat_") else "alonhadat_" + i)
@@ -82,7 +85,7 @@ def alonhadat(p):
 
 
 def phongtro123(p):
-    d = pd.read_csv(p, low_memory=False)
+    d = pd.read_csv(p, low_memory=False, dtype=PHONE_COLS)
     d = d[d.city.fillna("Hà Nội").str.contains("Hà Nội", case=False)]
     d["listing_url"] = d.url
     d["address"] = d.address_raw
@@ -92,7 +95,7 @@ def phongtro123(p):
 
 
 def nhatot(p):
-    d = pd.read_csv(p, low_memory=False)
+    d = pd.read_csv(p, low_memory=False, dtype=PHONE_COLS)
     d["district"] = d.district.str.replace(PREFIX, "", regex=True)
     d["ward"] = d.ward.fillna("").str.replace(WARD_PREFIX, "", regex=True)
     d["listing_id"] = d.listing_id.astype(str)
@@ -100,7 +103,7 @@ def nhatot(p):
 
 
 def rencity(p):
-    d = pd.read_csv(p, low_memory=False)
+    d = pd.read_csv(p, low_memory=False, dtype=PHONE_COLS)
     out = pd.DataFrame({
         "listing_id": "RC_" + d.id.astype(str), "title": d.title,
         "description": "", "ward": d.wards_name.fillna("").str.replace(WARD_PREFIX, "", regex=True),
@@ -160,7 +163,7 @@ def fill_coords(d, old):
 
 def finish(d, platform, polys, district_names, old=None):
     """Common columns + everything derived from coordinates."""
-    d = d.copy()
+    d = (d.drop_duplicates("listing_id") if "listing_id" in d else d).copy()   # API pages overlap (Rencity: 2 ads twice)
     d["platform"] = platform
     d["contact_phone"] = d.contact_phone.map(hash_phone) if "contact_phone" in d else np.nan   # no raw phones on disk
     d["contact_zalo"] = d.contact_phone
@@ -207,7 +210,7 @@ def main():
     ap.add_argument("--fresh", default=str(ROOT / "data/interim/recrawl_2026-10"))
     a = ap.parse_args()
     fresh = Path(a.fresh)
-    old = pd.read_csv(OLD, low_memory=False)
+    old = pd.read_csv(OLD, low_memory=False, dtype=PHONE_COLS)
     polys = load_polys()
     names = old.district.dropna().unique()
     extra = (old.estimated_total_living_cost - old.price_vnd).median()

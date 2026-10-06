@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from src.clean.sample_schema import _specific_address_key
+from src.clean.sample_schema import WHOLE_HOUSE, _specific_address_key
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA = ROOT / "data/unified_hanoi_rentals_dedup.csv"   # python -m src.recsys.prepare
@@ -166,8 +166,10 @@ def _rank01(s):
 
 def recommend(d, budget, districts=(), min_area=None, need=(), university=None,
               max_uni_km=None, max_metro_km=None, house_type=None, top=10, weights=None, include_shared=False, per_building=1,
-              max_days_old=None, ranker="ml"):
+              max_days_old=None, ranker="ml", whole_house=False):
     m = d[d.price_vnd <= budget]
+    if not (whole_house or (house_type and "nguyên căn" in house_type.lower())):
+        m = m[m.house_type != WHOLE_HOUSE]   # a room search; whole houses only when asked for
     if not include_shared:
         # shared-room ads price one slot but list the whole room's area, so they look like
         # -57% "bargains" (median value_residual_pct) and swamp the top of the ranking

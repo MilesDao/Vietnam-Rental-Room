@@ -14,6 +14,7 @@ lacking usable coordinates are geocoded separately.
 """
 from __future__ import annotations
 
+import math
 import re
 
 import numpy as np
@@ -64,6 +65,27 @@ HANOI_DISTRICTS = (
 # the corner of a Web Mercator map.
 HANOI_LAT = (20.50, 21.45)
 HANOI_LON = (105.25, 106.05)
+
+WHOLE_HOUSE = "Nhà nguyên căn"
+# Every source spells room types its own way ("phong_tro", "Phòng trọ / Khác", "1-ngu", "Studio khép kín"...).
+# First match wins, on the accent-folded label.
+_HOUSE_TYPE_RULES = (
+    (re.compile(r"nguyen[ -]can"), WHOLE_HOUSE),
+    (re.compile(r"chung cu mini|ccmn"), "Chung cư mini"),
+    (re.compile(r"studio"), "Studio"),
+    (re.compile(r"phong ngu|^\d-ngu|\dpn|can ho"), "Căn hộ"),
+    (re.compile(r"o ghep|homestay|slot"), "Ở ghép"),
+    (re.compile(r"phong[ _]tro|wc[ -]chung|gac[ ]?xep|duplex"), "Phòng trọ"),
+)
+
+
+def canonical_house_type(value: object) -> str | None:
+    """One label per kind of rental: Phòng trọ, Studio, Căn hộ, Chung cư mini, Nhà nguyên căn, Ở ghép, Khác."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    folded = ascii_fold(value).lower()
+    return next((label for rx, label in _HOUSE_TYPE_RULES if rx.search(folded)), "Khác")
+
 
 PRICE_REL_TOL = 0.05   # same as src/clean/dedup.py's attribute match
 AREA_ABS_TOL_M2 = 1.0
@@ -219,7 +241,7 @@ def clean_sample_frame(df: pd.DataFrame) -> pd.DataFrame:
 
     for col in TEXT_COLUMNS:
         out[col] = out[col].map(_clean_str)
-    out["house_type"] = out["house_type"].replace({"phong_tro": "Phòng trọ"})
+    out["house_type"] = out["house_type"].map(canonical_house_type)
 
     out["district_raw"] = out["district"]
     districts = [
@@ -296,6 +318,15 @@ def _same_number(a: float, b: float, *, abs_tol: float = 0.0, rel_tol: float = 0
     return abs(a - b) <= max(abs_tol, rel_tol * max(abs(a), abs(b)))
 
 
+CROSS_SITE_RADIUS_M = 150
+
+
+def _metres(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Equirectangular distance; exact enough at a few hundred metres."""
+    x = math.radians(lon2 - lon1) * math.cos(math.radians((lat1 + lat2) / 2))
+    return 6_371_000 * math.hypot(x, math.radians(lat2 - lat1))
+
+
 def mark_duplicates(df: pd.DataFrame, cross_platform: bool = False) -> pd.DataFrame:
     """Add duplicate_of (the kept row's listing_id; None on kept rows) and n_duplicates.
 
@@ -312,9 +343,13 @@ def mark_duplicates(df: pd.DataFrame, cross_platform: bool = False) -> pd.DataFr
     By default cross-platform matches are left alone: they are separate adverts,
     and each platform's file should keep its own rows. cross_platform=True
     (used by the recommender, which wants one row per room) matches across
-    platforms too.
+    platforms too, and adds one cross-site rule (same_room_other_site): same
+    phone hash, price within 5%, within 150 m. It only reaches sources that
+    carry a phone hash in the project's format; Facebook's hashes use another
+    scheme and cannot be matched.
     """
     df = df.reset_index(drop=True)
+    nan = pd.Series(np.nan, index=df.index)
     keys = pd.DataFrame({
         "platform": df["platform"].fillna(""),
         "district": df["district"].fillna(""),
@@ -322,11 +357,29 @@ def mark_duplicates(df: pd.DataFrame, cross_platform: bool = False) -> pd.DataFr
         "address": df["address"].map(_specific_address_key),
         "price": pd.to_numeric(df["price_vnd"], errors="coerce"),
         "area": pd.to_numeric(df["area_m2"], errors="coerce"),
+        "phone": df.get("contact_phone", nan).where(lambda s: s.astype(str).str.fullmatch(r"[0-9a-f]{16,64}"), None),
+        "lat": pd.to_numeric(df.get("latitude", nan), errors="coerce"),
+        "lon": pd.to_numeric(df.get("longitude", nan), errors="coerce"),
     })
     rec = keys.to_dict("index")
 
+    def same_room_other_site(a: dict, b: dict) -> bool:
+        """Two sites word one room differently, so title/address rarely agree: same poster (phone hash),
+        same price within 5%, within CROSS_SITE_RADIUS_M, and areas that agree when both are stated."""
+        if not (cross_platform and a["platform"] != b["platform"] and a["phone"] and a["phone"] == b["phone"]):
+            return False
+        if pd.isna(a["area"]) != pd.isna(b["area"]):
+            area_ok = True
+        else:
+            area_ok = _same_number(a["area"], b["area"], abs_tol=AREA_ABS_TOL_M2)
+        near = (not any(pd.isna(x) for x in (a["lat"], a["lon"], b["lat"], b["lon"]))
+                and _metres(a["lat"], a["lon"], b["lat"], b["lon"]) <= CROSS_SITE_RADIUS_M)
+        return area_ok and near and _same_number(a["price"], b["price"], rel_tol=PRICE_REL_TOL)
+
     def match(i: int, j: int) -> bool:
         a, b = rec[i], rec[j]
+        if same_room_other_site(a, b):
+            return True
         numbers_agree = _same_number(
             a["price"], b["price"], rel_tol=PRICE_REL_TOL
         ) and _same_number(a["area"], b["area"], abs_tol=AREA_ABS_TOL_M2)

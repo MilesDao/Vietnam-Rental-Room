@@ -27,6 +27,16 @@ def test_hash_phone_never_returns_a_raw_number():
     assert raw != "0912345678" and len(raw) == 16
     assert hash_phone("a3f09b12c4d5e6f7") == "a3f09b12c4d5e6f7"   # already hashed stays put
     assert hash_phone("0" * 15 + "1") == "0" * 15 + "1"          # a digit-only hash is not re-hashed
+    assert hash_phone(912345678) == hash_phone(912345678.0) == raw   # number read from CSV, leading 0 lost
+    assert hash_phone(float("nan")) is None
+
+
+def test_phone_numbers_in_ad_text_are_redacted():
+    from src.recsys.prepare import PHONE_IN_TEXT, redact_phones
+    t = "Phòng 25m2 giá 3.500.000, LH/Zalo 0912.345.678 hoặc +84 912 345 678, tầng 3"
+    assert redact_phones(t) == "Phòng 25m2 giá 3.500.000, LH/Zalo [SĐT ẩn] hoặc [SĐT ẩn], tầng 3"
+    d = pd.read_csv("data/unified_hanoi_rentals_dedup.csv", low_memory=False, dtype=str)
+    assert not d.description.fillna("").str.contains(PHONE_IN_TEXT).any()
 
 
 def test_prepared_data_holds_no_raw_phone():
@@ -34,6 +44,14 @@ def test_prepared_data_holds_no_raw_phone():
     v = d.contact_phone.dropna()
     assert v.str.fullmatch(r"[0-9a-f]{16}|[0-9a-f]{64}").all()
     assert "contact_name" not in d
+
+
+def test_prepared_data_ids_and_types_are_clean():
+    from src.clean.sample_schema import canonical_house_type
+    d = pd.read_csv("data/unified_hanoi_rentals_dedup.csv", low_memory=False, dtype={"listing_id": str})
+    assert d.listing_id.is_unique                      # votes and duplicate_of join on it
+    types = d.house_type.dropna()
+    assert (types.map(canonical_house_type) == types).all()   # one spelling per type
 
 
 def test_price_model_predictions_are_out_of_fold():
@@ -53,6 +71,32 @@ def test_price_model_predictions_are_out_of_fold():
     assert b.value_pct[0] > 1000
 
 
+def test_own_price_does_not_leak_through_missing_area():
+    rng = np.random.default_rng(0)
+    n = 300
+    area = rng.uniform(15, 40, n)
+    d = pd.DataFrame({"listing_id": [f"x{i}" for i in range(n)], "title": "phòng", "house_type": "Phòng trọ",
+                      "district": rng.choice(["A", "B"], n), "platform": "P", "area_m2": area,
+                      "price_vnd": area * 120_000 * rng.uniform(0.9, 1.1, n), "duplicate_of": None,
+                      **{a: rng.integers(0, 2, n) for a in price_model.AMENITIES},
+                      **{c: rng.uniform(0, 10, n) for c in price_model.DIST}})
+    d.loc[d.index % 2 == 0, "area_m2"] = np.nan   # half the rooms state no area, as in the real data
+    a = price_model.enrich(d, save=False)
+    d2 = d.copy()
+    d2.loc[0, "price_vnd"] *= 3                    # row 0 has no stated area
+    b = price_model.enrich(d2, save=False)
+    assert a.fair_price[0] == b.fair_price[0]      # its own price must not reach its fair price via area_est
+
+
+def test_cv_groups_keep_one_poster_and_one_building_together():
+    d = pd.DataFrame({"contact_phone": ["aaaa", "aaaa", None, None, None],
+                      "latitude": [21.0, 21.2, 21.03001, 21.03002, 21.1],
+                      "longitude": [105.8, 105.9, 105.85001, 105.85002, 105.7]})
+    g = price_model.cv_groups(d)
+    assert g[0] == g[1]            # same poster, far apart
+    assert g[2] == g[3] != g[4]    # a few metres apart vs another place
+
+
 def test_feedback_round_trip_and_ltr(tmp_path):
     db = tmp_path / "fb.sqlite"
     rng = np.random.default_rng(1)
@@ -69,6 +113,9 @@ def test_feedback_round_trip_and_ltr(tmp_path):
     rep, w = ltr.evaluate(ltr.labelled(feedback.events(db=db)))
     assert rep["labels"] == 120 and max(w, key=w.get) == "value"
     assert rep["learned_cv"]["ndcg@10"] >= rep["hand"]["ndcg@10"]
+    assert {"nearest_first", "price_plus_distance"} <= set(rep)
+    c = rep["coef_std"]
+    assert c["value"]["lo"] > 0 and c["value"]["coef"] > abs(c["price"]["coef"])   # signed, with an interval
 
 
 def test_similar_rooms_and_text_search():

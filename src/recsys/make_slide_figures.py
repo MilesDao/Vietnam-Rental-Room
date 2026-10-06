@@ -52,9 +52,9 @@ def thousands(n):
 # ------------------------------------------------------------------ slide 2: pipeline
 def fig_pipeline(n_raw, n_dedup, mape):
     steps = [("Data", f"{thousands(n_raw)} listings"+"\n"+"from 7 sources", "#cbd5e1"),
-             ("Prepare", "fix coordinates,\ndrop 116 rows,\nmerge duplicates"+"\n"+f"→ {thousands(n_dedup)} rooms", "#99f6e4"),
+             ("Prepare", "clean prices & links,\nhash phones,\nmerge duplicates"+"\n"+f"→ {thousands(n_dedup)} rooms", "#99f6e4"),
              ("Features", "area, room type,\ndistrict, amenities,\ndistances, text", "#99f6e4"),
-             ("ML models", "fair price (MAPE\n18%), missing area,\nTF-IDF text model", "#99f6e4"),
+             ("ML models", f"fair price (MAPE\n{mape:.0f}%), missing area,\nTF-IDF text model", "#99f6e4"),
              ("ML ranker", "learning to rank:\nweights learned\nfrom votes", "#99f6e4"),
              ("App", "search, map,\nsimilar rooms,\nsave & compare", "#99f6e4"),
              ("Feedback", "like / dislike\n→ more votes\n→ retrain", "#99f6e4")]

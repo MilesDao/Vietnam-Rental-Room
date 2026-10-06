@@ -8,3 +8,6 @@ streamlit>=1.40
 folium>=0.17
 streamlit-folium>=0.22
 scikit-learn>=1.5
+shapely>=2.0
+matplotlib>=3.8
+pytest>=8.0

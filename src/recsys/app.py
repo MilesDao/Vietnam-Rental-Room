@@ -23,6 +23,7 @@ from streamlit_folium import st_folium
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # streamlit puts src/recsys, not the repo root, on sys.path
 from src.clean.link_check import parse_images
 from src.recsys import feedback
+from src.clean.sample_schema import WHOLE_HOUSE
 from src.recsys.recommend import load, ranker_info, recommend
 from src.recsys.ref_points import UNIVERSITIES
 from src.recsys.similar import Index
@@ -245,7 +246,8 @@ with st.sidebar:
     lo, hi = st.slider("Khoảng giá (triệu/tháng)", 0.5, 25.0,
                        tuple(sorted(min(max(qp(k, v, float), 0.5), 25.0) for k, v in (("lo", 1.0), ("hi", 5.0)))), 0.5)
     all_types = sorted(d.house_type.dropna().unique())
-    types = st.multiselect("Loại phòng", all_types, qp_list("types", all_types))
+    types = st.multiselect("Loại phòng", all_types, qp_list("types", all_types),
+                           help="Để trống = mọi loại trừ Nhà nguyên căn; chọn Nhà nguyên căn nếu muốn thuê cả nhà.")
     a_lo, a_hi = st.slider("Diện tích (m²)", 0, 120, (0, 120), 5)
     need = st.multiselect("Tiện nghi", list(AMENITY_VI), qp_list("need", AMENITY_VI), format_func=AMENITY_VI.get)
     all_d = sorted(d.district.dropna().unique())
@@ -273,7 +275,7 @@ with st.sidebar:
 
 # ---------------------------------------------------------------- results
 res = recommend(d, hi * 1e6, districts, None, need, uni or None, max_uni, None, None, 10 ** 6,
-                include_shared=shared, per_building=0, max_days_old=fresh, ranker=ranker)
+                include_shared=shared, per_building=0, max_days_old=fresh, ranker=ranker, whole_house=WHOLE_HOUSE in types)
 # recommend() returns a trimmed set of columns; bring back what the cards and the map need
 extra = d.set_index("listing_id")[["house_type", "address", "latitude", "longitude", "image_urls", "distance_to_center_km"]]
 res = res.join(extra, on="listing_id")

@@ -78,12 +78,45 @@ def weights_from(model):
     return dict(zip(KEYS, np.round(w, 3).tolist()))
 
 
-def evaluate(v):
-    """Grouped-CV comparison; returns (report dict, weights fit on all data or None)."""
+def with_baselines(v):
+    """Score columns of the fixed orderings. Hand-set weights need no training, so they are scored on every
+    search, while the learned weights are scored held-out; the report must say so."""
     v = v.copy()
     v["hand"] = sum(WEIGHTS.get(k, 0) * v[p] for k, p in zip(KEYS, FEATS))
     v["cheapest"] = -v.price_vnd
+    v["nearest"] = v.s_dist                     # nearest first (s_dist: 1 = closest in that result list)
+    v["price_dist"] = v.s_price + v.s_dist      # price fit + closeness, equal weights
     v["learned"] = np.nan
+    return v
+
+
+def signed_coefficients(v, n_boot=500, seed=0):
+    """Standardised logistic coefficients WITH their sign, and a 95% bootstrap interval over searches.
+    For the report only: the engine still uses weights_from() (clipped). A near-constant feature
+    (q_not_sublet ~ 98% ones) gets an unstable coefficient, which the interval shows."""
+    X = v[FEATS].astype(float)
+    sd = X.std().replace(0, 1)
+    Z = (X - X.mean()) / sd
+
+    def fit(idx):
+        y = v.label.iloc[idx]
+        if y.nunique() < 2:
+            return None
+        return LogisticRegression(max_iter=1000).fit(Z.iloc[idx], y).coef_[0]
+
+    full = fit(np.arange(len(v)))
+    keys = list(v.groupby(["session", "query"]).indices.values())
+    rng = np.random.default_rng(seed)
+    boots = [b for b in (fit(np.concatenate([keys[i] for i in rng.integers(0, len(keys), len(keys))]))
+                         for _ in range(n_boot)) if b is not None]
+    lo, hi = np.percentile(boots, [2.5, 97.5], axis=0)
+    return {k: {"coef": round(float(c), 3), "lo": round(float(a), 3), "hi": round(float(b), 3)}
+            for k, c, a, b in zip(KEYS, full, lo, hi)}
+
+
+def evaluate(v):
+    """Grouped-CV comparison; returns (report dict, weights fit on all data or None)."""
+    v = with_baselines(v)
     n_splits = min(5, v.session.nunique())
     if n_splits >= 2 and v.label.nunique() == 2:
         for tr, te in GroupKFold(n_splits).split(v, groups=v.session):
@@ -92,7 +125,9 @@ def evaluate(v):
             w = weights_from(LogisticRegression(max_iter=1000).fit(v[FEATS].iloc[tr], v.label.iloc[tr]))
             v.iloc[te, v.columns.get_loc("learned")] = sum(w[k] * v[p].iloc[te] for k, p in zip(KEYS, FEATS))
     rep = {"labels": int(len(v)), "sessions": int(v.session.nunique()), "share_up": round(float(v.label.mean()), 3),
-           "hand": rank_metrics(v, "hand"), "cheapest_first": rank_metrics(v, "cheapest")}
+           "hand": rank_metrics(v, "hand"), "cheapest_first": rank_metrics(v, "cheapest"),
+           "nearest_first": rank_metrics(v, "nearest"), "price_plus_distance": rank_metrics(v, "price_dist"),
+           "note": "hand/nearest/price_plus_distance are scored on all searches; learned_cv is held-out"}
     rnd = random_baseline(v)
     rep["random"] = {"ndcg@10": round(float(rnd.ndcg.mean()), 3), "p@5": round(float(rnd.p5.mean()), 3)}
     if v.learned.notna().all():
@@ -101,21 +136,22 @@ def evaluate(v):
     if v.label.nunique() == 2:
         full = weights_from(LogisticRegression(max_iter=1000).fit(v[FEATS], v.label))
         rep["learned_weights"] = full
+        if v.groupby(["session", "query"]).ngroups >= 2:
+            rep["coef_std"] = signed_coefficients(v)
     return rep, full
 
 
 def per_search(v, k=10):
-    """NDCG@k per search for hand-set, learned (session-grouped CV) and cheapest-first, one row per search."""
-    v = v.copy()
-    v["hand"] = sum(WEIGHTS.get(kk, 0) * v[p] for kk, p in zip(KEYS, FEATS))
-    v["cheapest"] = -v.price_vnd
-    v["learned"] = np.nan
+    """NDCG@k per search for hand-set, learned (session-grouped CV), cheapest-first, nearest-first and
+    price+distance, one row per search."""
+    v = with_baselines(v)
     for tr, te in GroupKFold(min(5, v.session.nunique())).split(v, groups=v.session):
         w = weights_from(LogisticRegression(max_iter=1000).fit(v[FEATS].iloc[tr], v.label.iloc[tr]))
         v.iloc[te, v.columns.get_loc("learned")] = sum(w[kk] * v[p].iloc[te] for kk, p in zip(KEYS, FEATS))
     rows = []
     for key, g in v.groupby(["session", "query"]):
-        rows.append({"search": key[0], **{c: ndcg_at(g[c], g.label, k) for c in ("hand", "learned", "cheapest")}})
+        rows.append({"search": key[0], **{c: ndcg_at(g[c], g.label, k)
+                                          for c in ("hand", "learned", "cheapest", "nearest", "price_dist")}})
     per = pd.DataFrame(rows).dropna()
     rnd = random_baseline(v).set_index("search").ndcg
     per["random"] = per.search.map(rnd)
