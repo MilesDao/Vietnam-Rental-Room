@@ -4,6 +4,8 @@
         --university TMU --need air_conditioner water_heater --top 10
 """
 import argparse
+import json
+import re
 from pathlib import Path
 
 import numpy as np
@@ -11,21 +13,59 @@ import pandas as pd
 
 from src.clean.sample_schema import _specific_address_key
 
-DATA = Path(__file__).resolve().parents[2] / "data/unified_hanoi_rentals_dedup.csv"  # python -m src.recsys.dedup_unified
+ROOT = Path(__file__).resolve().parents[2]
+DATA = ROOT / "data/unified_hanoi_rentals_dedup.csv"   # python -m src.recsys.prepare
+LTR_WEIGHTS = ROOT / "data/models/ltr_weights.json"    # written by src.recsys.ltr (learned ranker)
 AMENITIES = ["air_conditioner", "water_heater", "refrigerator", "washing_machine",
              "elevator", "balcony_window", "fire_safety", "pet_allowed"]
-# ponytail: fixed weights, learn them from clicks/ratings if you ever collect any
+# hand-set weights: the baseline ranker and the fallback when no learned ranker exists
 WEIGHTS = {"price": 0.30, "value": 0.25, "distance": 0.25, "amenity": 0.20}
 SHOW = ["listing_id", "platform", "title", "district", "ward", "price_vnd", "area_est", "area_imputed",
         "estimated_total_living_cost", "market_value_tier", "nearest_university",
         "distance_to_nearest_university_km", "distance_to_nearest_metro_km",
-        "amenities_list", "listing_url", "score", "s_price", "s_value", "s_dist", "s_amenity"]
+        "distance_to_target_km", "fair_price", "value_pct", "days_old",
+        "amenities_list", "listing_url", "score", "s_price", "s_value", "s_dist", "s_amenity",
+        "q_not_sublet", "q_has_address", "q_district_ok", "q_any_gender"]
+
+
+def ranker_info():
+    """The published learned ranker (weights, training source, held-out report) or None if there is none."""
+    try:
+        info = json.loads(LTR_WEIGHTS.read_text(encoding="utf-8"))
+        return info if "weights" in info else None
+    except (OSError, ValueError):
+        return None
+
+
+def active_weights(ranker="ml"):
+    """ranker="ml": the learned weights (src/recsys/ltr.py) when published, else the hand-set WEIGHTS;
+    ranker="hand": always the hand-set WEIGHTS."""
+    info = ranker_info() if ranker == "ml" else None
+    return info["weights"] if info else WEIGHTS
+
+
+def campus_distance(d, university):
+    """km to the nearest campus whose name contains `university` (e.g. "NEU", "VNU"); NaN without coordinates."""
+    from src.recsys.ref_points import UNIVERSITIES
+    hits = [u for u in UNIVERSITIES if university.lower() in u["name"].lower()]
+    if not hits:
+        raise ValueError(f"unknown university {university!r}; try one of: " + ", ".join(u["name"] for u in UNIVERSITIES))
+    lat, lon = np.radians(d.latitude.astype(float)), np.radians(d.longitude.astype(float))
+    km = []
+    for u in hits:
+        a = (np.sin((np.radians(u["lat"]) - lat) / 2) ** 2
+             + np.cos(lat) * np.cos(np.radians(u["lat"])) * np.sin((np.radians(u["lng"]) - lon) / 2) ** 2)
+        km.append(12742 * np.arcsin(np.sqrt(a)))
+    return pd.concat(km, axis=1).min(axis=1)
 
 
 def load(path=DATA):
     d = pd.read_csv(path, low_memory=False).drop_duplicates("listing_id")
     d = d[d.duplicate_of.isna()]  # one row per room across platforms
-    return mark_shared(add_typical_price(impute_area(null_fallback_geo(d.dropna(subset=["price_vnd"])))))
+    d = null_fallback_geo(d.dropna(subset=["price_vnd"]))
+    if "area_est" not in d:   # prepare.py normally supplies an ML estimate
+        d = impute_area(d)
+    return mark_quality(mark_shared(add_typical_price(d)))
 
 
 def null_fallback_geo(d):
@@ -78,10 +118,37 @@ def price_score(price, typical, budget):
     """1 at the typical price, falling off for much cheaper rooms (usually a slot, a stub ad or
     a mislabelled price) and, more gently, towards the budget. Replaces 1 - price/budget, which
     made the cheapest ads win every query."""
-    ref = np.minimum(typical, budget)
+    # a generous budget also says what the user wants: anchor at >= 70 % of it
+    ref = np.minimum(np.maximum(typical, 0.7 * budget), budget)
     cheap = np.minimum(price / ref, 1)
     dear = 1 - 0.5 * (price - ref) / np.maximum(budget - ref, 1)
     return np.where(price < ref, cheap, dear)
+
+
+SUBLET_RE = r"\bpass\b|nhượng|sang lại|sang nhượng"
+FEMALE_RE = r"cho nữ|nữ thuê|chỉ nữ|chỉ nhận nữ|ưu tiên nữ"
+# quality parts: 1 = no problem. Hand-set weight 0 (unused) until learning to rank gives them one.
+# q_any_gender is computed for display/filters but NOT learned: a penalty for "female-only" ads learned from
+# generic personas would push suitable rooms down for women.
+QUALITY = ["q_not_sublet", "q_has_address", "q_district_ok"]
+
+
+def mark_quality(d):
+    """Data-quality signals that the four classic score parts cannot see (found while rating results)."""
+    from src.clean.text_clean import ascii_fold
+    d = d.copy()
+    text = (d.title.fillna("") + " " + d.description.fillna("").str[:400])
+    d["q_not_sublet"] = (~text.str.contains(SUBLET_RE, case=False)).astype(float)
+    d["q_any_gender"] = (~text.str.contains(FEMALE_RE, case=False)).astype(float)
+    d["q_has_address"] = (d.address.map(_specific_address_key) != "").astype(float)
+    # a district named in the address/title that differs from the district label = location doubt
+    names = {n: ascii_fold(n) for n in d.district.dropna().unique()}
+    where = (d.address.fillna("") + " " + d.title.fillna("")).map(lambda t: ascii_fold(t) or "")
+    named = pd.DataFrame({n: where.str.contains(r"\b" + re.escape(f) + r"\b") for n, f in names.items()})
+    own = pd.Series([bool(n in named.columns and named.at[i, n]) if isinstance(n, str) else False
+                     for i, n in zip(named.index, d.district)], index=d.index)
+    d["q_district_ok"] = (~(named.any(axis=1) & ~own)).astype(float)
+    return d
 
 
 def mark_shared(d):
@@ -98,7 +165,8 @@ def _rank01(s):
 
 
 def recommend(d, budget, districts=(), min_area=None, need=(), university=None,
-              max_uni_km=None, max_metro_km=None, house_type=None, top=10, weights=None, include_shared=False, per_building=1):
+              max_uni_km=None, max_metro_km=None, house_type=None, top=10, weights=None, include_shared=False, per_building=1,
+              max_days_old=None, ranker="ml"):
     m = d[d.price_vnd <= budget]
     if not include_shared:
         # shared-room ads price one slot but list the whole room's area, so they look like
@@ -110,30 +178,34 @@ def recommend(d, budget, districts=(), min_area=None, need=(), university=None,
         m = m[m.area_m2.isna() | (m.area_m2 >= min_area)]
     for a in need:
         m = m[m[a] == 1]
-    if university:
-        m = m[m.nearest_university.fillna("").str.contains(university, case=False, regex=False)]
-    if max_uni_km:
+    if university:   # distance to the chosen campus, not to whichever campus happens to be nearest
+        m = m.assign(distance_to_target_km=campus_distance(m, university).round(2))
+        m = m[m.distance_to_target_km <= (max_uni_km or 3.0)]
+    elif max_uni_km:
         m = m[m.distance_to_nearest_university_km <= max_uni_km]
     if max_metro_km:
         m = m[m.distance_to_nearest_metro_km <= max_metro_km]
     if house_type:
         m = m[m.house_type.fillna("").str.contains(house_type, case=False, regex=False)]
+    if max_days_old is not None and "days_old" in m:   # undated ads are kept
+        m = m[m.days_old.isna() | (m.days_old <= max_days_old)]
     if m.empty:
         return m
     m = m.copy()
     s_price = price_score(m.price_vnd, m.typical_price, budget)
-    # negative residual = cheaper than the model expects for that room
-    # ponytail: rows without a residual fall back to rank of price per estimated m2 (mixes two
-    # measures); fit the residual model on area_est if this matters
-    s_value = 1 - _rank01(m.value_residual_pct).where(m.value_residual_pct.notna(), _rank01(m.price_vnd / m.area_est))
-    dist = m.distance_to_nearest_university_km if university or max_uni_km \
-        else m.distance_to_center_km
+    if "value_pct" in m:   # ML fair price (src/recsys/price_model.py), available for every row
+        s_value = 1 - _rank01(m.value_pct)
+    else:   # older data file: branch Ridge residual, else price per estimated m2
+        s_value = 1 - _rank01(m.value_residual_pct).where(m.value_residual_pct.notna(), _rank01(m.price_vnd / m.area_est))
+    dist = (m.distance_to_target_km if university else
+            m.distance_to_nearest_university_km if max_uni_km else m.distance_to_center_km)
     s_dist = 1 - _rank01(dist)
     s_am = _rank01(m.amenity_count)
-    w = weights or WEIGHTS
+    q = {k: m[k] if k in m else 1.0 for k in QUALITY}
+    w = weights or active_weights(ranker)
     m["s_price"], m["s_value"], m["s_dist"], m["s_amenity"] = s_price, s_value, s_dist, s_am   # parts of the score, 0-1
-    m["score"] = (w["price"] * s_price + w["value"] * s_value
-                  + w["distance"] * s_dist + w["amenity"] * s_am).round(3)
+    m["score"] = (w["price"] * s_price + w["value"] * s_value + w["distance"] * s_dist + w["amenity"] * s_am
+                  + sum(w.get(k, 0) * q[k] for k in QUALITY)).round(3)
     m = m.sort_values("score", ascending=False)
     if per_building:
         # the same house/alley number in one district = same building: show its best rooms only.
@@ -155,11 +227,13 @@ def main():
     p.add_argument("--house-type")
     p.add_argument("--include-shared", action="store_true", help="keep ở-ghép / slot ads")
     p.add_argument("--per-building", type=int, default=1, help="max rooms per house/alley number (0 = no cap)")
+    p.add_argument("--ranker", choices=["ml", "hand"], default="ml",
+                   help="ml = learned weights when available (default); hand = hand-set weights")
     p.add_argument("--top", type=int, default=10)
     p.add_argument("-o", help="save results to CSV (utf-8-sig)")
     a = p.parse_args()
     r = recommend(load(), a.budget, a.district, a.min_area, a.need, a.university,
-                  a.max_uni_km, a.max_metro_km, a.house_type, a.top, include_shared=a.include_shared, per_building=a.per_building)
+                  a.max_uni_km, a.max_metro_km, a.house_type, a.top, include_shared=a.include_shared, per_building=a.per_building, ranker=a.ranker)
     if r.empty:
         print("No listing matches those filters; loosen one.")
         return

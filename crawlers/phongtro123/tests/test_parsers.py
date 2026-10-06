@@ -11,6 +11,15 @@ from src.parse.phongtro123_parser import (
 from src.parse.filter import is_valid_rental_room, is_listing_expired, MAX_RENTAL_PRICE_VND
 
 
+class TestGalleryImages(unittest.TestCase):
+    def test_only_own_gallery(self):
+        import pathlib
+        html = (pathlib.Path(__file__).parent / "fixtures" / "pr714064.html").read_text(encoding="utf-8")
+        imgs = parse_phongtro123_detail(html, "https://phongtro123.com/cho-thue-phong-van-cao-p-ngoc-ha-pr714064.html")["image_urls"]
+        self.assertEqual(len(imgs), 6)
+        self.assertTrue(all("/900x600/" in i and "/2026/10/04/" in i for i in imgs))   # no related-ad thumbs
+
+
 class TestParsersAndFilters(unittest.TestCase):
 
     def test_is_listing_expired(self):

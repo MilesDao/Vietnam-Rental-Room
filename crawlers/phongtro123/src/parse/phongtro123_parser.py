@@ -169,15 +169,13 @@ def parse_phongtro123_detail(html_content: str, url: str) -> Dict[str, Any]:
     if time_tag:
         posted_at_raw = time_tag.get("title") or time_tag.get_text(strip=True)
 
-    # Image URLs (up to 8 images, deduplicated)
+    # Image URLs: only this ad's own gallery (div.post__photos .carousel-item). Every other <img> on the
+    # page is a "related ads" thumbnail or a site icon, i.e. a photo of a different listing.
     images: List[str] = []
-    for img in soup.find_all("img"):
+    for img in soup.select("div.post__photos .carousel-item img"):
         src = img.get("src") or img.get("data-src")
-        if src and str(src).startswith("http") and not any(logo in str(src) for logo in ["logo", "icon", "banner", "avatar", "default"]):
-            if src not in images and not any(src.split("/")[-1] in x for x in images):
-                images.append(str(src))
-                if len(images) >= 8:
-                    break
+        if src and str(src).startswith("http") and src not in images:
+            images.append(str(src))
 
     # Phone Number (Raw phone number without hashing)
     phone_number = ""

@@ -126,6 +126,7 @@ def save_to_csv(rooms: List[Dict[str, Any]], output_path: str) -> None:
         "expires_at",
         "image_count",
         "image_urls",
+        "post_url",
         "description",
     ]
 
@@ -163,6 +164,7 @@ def save_to_csv(rooms: List[Dict[str, Any]], output_path: str) -> None:
                 "expires_at": room.get("expiresAt", ""),
                 "image_count": len(images),
                 "image_urls": " | ".join(images),
+                "post_url": f"https://yourhome.top/room/{room.get('id', '')}",
                 "description": room.get("description", "").strip(),
             }
             writer.writerow(row)

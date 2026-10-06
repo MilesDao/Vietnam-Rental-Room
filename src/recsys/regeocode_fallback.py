@@ -65,8 +65,9 @@ def fallback_mask(d):
     return aw.groupby([d.latitude, d.longitude]).transform("nunique") >= MIN_WARDS, aw
 
 
-def main():
-    d = pd.read_csv(SRC, low_memory=False)
+def repair(d):
+    """Return a copy of d with fallback-coordinate rows re-placed at their ward centroid (see module doc)."""
+    d = d.copy()
     bad, aw = fallback_mask(d)
     wards = sorted(aw[bad].dropna().unique())
     print(f"{bad.sum()} fallback rows, {len(wards)} distinct wards to geocode")
@@ -105,8 +106,13 @@ def main():
             round(ud, 2), UNIVERSITIES[u]["name"], UNIVERSITIES[u]["cluster"])
         d.loc[i, "university_proximity_tier"] = tier(ud, "> 2km (Khu vực ngoài SV)")
     d.loc[bad & d.latitude.isna(), ["metro_proximity_tier", "university_proximity_tier"]] = "Không rõ tọa độ"
-    d.to_csv(OUT, index=False, encoding="utf-8-sig")
-    print(f"wrote {OUT}; {bad.sum() - d.latitude[bad].isna().sum()} rows regained coordinates. {ATTRIBUTION}")
+    print(f"{bad.sum() - d.latitude[bad].isna().sum()} of {bad.sum()} fallback rows regained coordinates. {ATTRIBUTION}")
+    return d
+
+
+def main():
+    repair(pd.read_csv(SRC, low_memory=False)).to_csv(OUT, index=False, encoding="utf-8-sig")
+    print(f"wrote {OUT}")
 
 
 if __name__ == "__main__":

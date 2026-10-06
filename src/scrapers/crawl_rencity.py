@@ -13,7 +13,21 @@ import urllib.request
 from collections import Counter
 from typing import Any, Dict, List, Tuple
 
+from src.clean.link_check import slug
+
 BASE_API = "https://api1.renapp.vn/api"
+NOT_A_ROOM = ("văn phòng", "mặt bằng", "cửa hàng", "kho ", "nhà xưởng")
+
+
+def is_hanoi_room(item: Dict[str, Any]) -> bool:
+    """Hà Nội only, and no offices / shops (the API mixes them in with rooms)."""
+    title = (item.get("title") or "").strip().lower()
+    return "hà nội" in (item.get("province_name") or "").lower() and not title.startswith(NOT_A_ROOM)
+
+
+def post_url(item: Dict[str, Any]) -> str:
+    """Real per-ad page; only the trailing id matters to the site. search?post_id= is just the search page."""
+    return f"https://rencity.vn/post/{slug(item.get('title') or '') or 'p'}-{item.get('id')}"
 
 
 def fetch_posts_page(province_id: int = 1, page: int = 1, limit: int = 100) -> Dict[str, Any]:
@@ -110,7 +124,7 @@ def save_to_csv(items: List[Dict[str, Any]], filepath: str) -> None:
                 "image_urls": " | ".join(images),
                 "created_at": item.get("created_at") or "",
                 "updated_at": item.get("updated_at") or "",
-                "post_url": f"https://rencity.vn/search?post_id={post_id}",
+                "post_url": post_url(item),
             }
             writer.writerow(row)
 
@@ -142,7 +156,7 @@ def main() -> None:
     parser.add_argument("--output-dir", default=default_output_dir, help="Output directory (default: data/)")
     args = parser.parse_args()
 
-    items = crawl_all_rencity_hanoi()
+    items = [i for i in crawl_all_rencity_hanoi() if is_hanoi_room(i)]
     json_path = os.path.join(args.output_dir, "rooms_rencity_hanoi.json")
     csv_path = os.path.join(args.output_dir, "rooms_rencity_hanoi.csv")
 

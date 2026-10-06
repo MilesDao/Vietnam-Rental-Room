@@ -1,9 +1,9 @@
 """Figures for the slide deck (docs/SLIDES_PLAN.md, docs/SLIDES_SCRIPT.md) — English labels.
 
-    python -m src.recsys.make_slide_figures        # writes docs/slides/figures/s0X_*.png
+    python -m src.recsys.make_slide_figures        # writes docs/slides/figures/m*.png (main) and x*.png (backup)
 
 Everything is computed from the current data files, so the numbers on the slides match the reports.
-Needs: data/unified_hanoi_rentals.csv, *_geofixed.csv, *_dedup.csv, data/hanoi_districts.geojson,
+Needs: data/unified_hanoi_rentals_fresh.csv (python -m src.pipelines.merge_fresh), *_geofixed.csv, *_dedup.csv, data/hanoi_districts.geojson,
 data/recsys_eval_labels_v2.csv. Coordinates © OpenStreetMap contributors (Nominatim).
 District names stay in Vietnamese (proper nouns).
 """
@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 from matplotlib.patches import FancyArrowPatch, FancyBboxPatch, Polygon
 
-from src.recsys.recommend import WEIGHTS, load, recommend
+from src.recsys.recommend import QUALITY, active_weights, load, recommend, ranker_info
 from src.recsys.regeocode_fallback import fallback_mask
 
 OUT = Path("docs/slides/figures")
@@ -42,19 +42,22 @@ def save(fig, name):
     print("wrote", OUT / name)
 
 
+NL = "\n"   # newline for multi-line figure labels
+
+
 def thousands(n):
     return f"{n:,.0f}"
 
 
 # ------------------------------------------------------------------ slide 2: pipeline
-def fig_pipeline(n_raw, n_dedup):
-    steps = [("7 sources", f"{thousands(n_raw)} listings\nChotot, Facebook,\nPhongtro123, Mogi...", "#cbd5e1"),
-             ("Clean &\nstandardise", "price, area,\namenities,\nroom type", "#cbd5e1"),
-             ("Fix\ncoordinates", "geocode 35 wards\n(Nominatim,\ncached)", "#99f6e4"),
-             ("De-duplicate", f"across platforms\n→ {thousands(n_dedup)} listings", "#99f6e4"),
-             ("Features", "distance to\nuniversity / metro,\nvalue vs market", "#cbd5e1"),
-             ("Recommend", "hard filters +\nweighted score", "#99f6e4"),
-             ("Map app", "Streamlit: cards,\nphotos, radius\nsearch", "#99f6e4")]
+def fig_pipeline(n_raw, n_dedup, mape):
+    steps = [("Data", f"{thousands(n_raw)} listings"+"\n"+"from 7 sources", "#cbd5e1"),
+             ("Prepare", "fix coordinates,\ndrop 116 rows,\nmerge duplicates"+"\n"+f"→ {thousands(n_dedup)} rooms", "#99f6e4"),
+             ("Features", "area, room type,\ndistrict, amenities,\ndistances, text", "#99f6e4"),
+             ("ML models", "fair price (MAPE\n18%), missing area,\nTF-IDF text model", "#99f6e4"),
+             ("ML ranker", "learning to rank:\nweights learned\nfrom votes", "#99f6e4"),
+             ("App", "search, map,\nsimilar rooms,\nsave & compare", "#99f6e4"),
+             ("Feedback", "like / dislike\n→ more votes\n→ retrain", "#99f6e4")]
     fig, ax = plt.subplots(figsize=(15, 4.6))
     ax.set_xlim(0, len(steps) * 2.1)
     ax.set_ylim(0, 4)
@@ -70,10 +73,10 @@ def fig_pipeline(n_raw, n_dedup):
             ax.add_patch(FancyArrowPatch((x + 1.86, 2.35), (x + 2.14, 2.35), arrowstyle="-|>", mutation_scale=18,
                                          color=MUTED, lw=1.8))
     ax.add_patch(plt.Rectangle((0.1, 0.55), 0.35, 0.3, fc="#cbd5e1", ec=MUTED))
-    ax.text(0.6, 0.7, "pipeline from earlier phases", va="center", fontsize=12)
+    ax.text(0.6, 0.7, "data source (earlier phases)", va="center", fontsize=12)
     ax.add_patch(plt.Rectangle((6.2, 0.55), 0.35, 0.3, fc="#99f6e4", ec=MUTED))
-    ax.text(6.7, 0.7, "work done in this phase (fixes, de-duplication, recommender, app)", va="center", fontsize=12)
-    save(fig, "s02_pipeline.png")
+    ax.text(6.7, 0.7, "this project: data preparation, ML models, ML ranker, app, feedback loop", va="center", fontsize=12)
+    save(fig, "m1_pipeline.png")
 
 
 # ------------------------------------------------------------------ slide 3: sources
@@ -99,12 +102,15 @@ def fig_sources(raw):
     b.xaxis.set_visible(False)
     b.spines["bottom"].set_visible(False)
     fig.suptitle(f"{thousands(len(raw))} listings from 7 sources — uneven quality", fontsize=18, fontweight="bold", y=1.02)
-    save(fig, "s03_sources.png")
+    save(fig, "m2_data_sources.png")
 
 
 # ------------------------------------------------------------------ slide 4: fake coordinate before / after
 def fig_fallback(raw, fixed):
     bad, _ = fallback_mask(raw)
+    if not bad.any():   # the re-crawled data has no fake-coordinate rows; keep the figure made from the first dataset
+        print("x5_coordinate_fix.png not redrawn: no fallback-coordinate rows in the current data")
+        return
     feats = json.loads(Path("data/hanoi_districts.geojson").read_text(encoding="utf-8"))["features"]
 
     def draw_base(ax):
@@ -132,7 +138,7 @@ def fig_fallback(raw, fixed):
                 fontweight="bold", color="#115e59")
     axs[1].set_title("After: each ward geocoded (35 lookups)", fontsize=18, fontweight="bold")
     fig.text(0.5, 0.02, "© OpenStreetMap contributors · Nominatim", ha="center", fontsize=11, color=MUTED)
-    save(fig, "s04_fallback_coordinates.png")
+    save(fig, "x5_coordinate_fix.png")
 
 
 # ------------------------------------------------------------------ slide 5: dedup
@@ -154,7 +160,7 @@ def fig_dedup(dd):
     ax.legend(loc="lower right", frameon=False, fontsize=14)
     ax.set_title(f"{thousands(len(dd))} → {thousands(int((~dd.dup).sum()))} listings after merging cross-platform duplicates",
                  loc="left", fontweight="bold", fontsize=17)
-    save(fig, "s05_dedup.png")
+    save(fig, "m3b_dedup.png")
 
 
 # ------------------------------------------------------------------ slide 6: prices
@@ -184,30 +190,137 @@ def fig_prices(d):
     b.spines["bottom"].set_visible(False)
     fig.suptitle(f"Median rent {d.price_vnd.median() / 1e6:.1f} million VND; area matters more than location",
                  fontsize=18, fontweight="bold", y=1.03)
-    save(fig, "s06_prices.png")
+    save(fig, "x2_prices_by_district.png")
     return rho
 
 
-# ------------------------------------------------------------------ slide 7: score anatomy
-def fig_score(d):
+# ------------------------------------------------------------------ slides 6-7: the ML ranker
+SIGNALS = ["price", "value", "distance", "amenity"] + QUALITY
+SIGNAL_NAMES = {"price": "Price fit", "value": "Value vs market (ML fair price)", "distance": "Closeness",
+                "amenity": "Amenities", "q_not_sublet": "Not a sublet ad", "q_has_address": "Has street address",
+                "q_district_ok": "District matches address"}
+
+
+def fig_ranker_how():
+    """Schematic: from votes to weights to a ranking."""
+    fig, ax = plt.subplots(figsize=(16, 7.4))
+    ax.set_xlim(0, 16)
+    ax.set_ylim(0, 7.4)
+    ax.axis("off")
+
+    def box(x, y, w, h, title, lines, color, fs=12):
+        ax.add_patch(FancyBboxPatch((x, y), w, h, boxstyle="round,pad=0.04,rounding_size=0.15", fc=color, ec=MUTED, lw=1.4))
+        ax.text(x + w / 2, y + h - 0.35, title, ha="center", va="center", fontsize=14, fontweight="bold")
+        ax.text(x + w / 2, y + h / 2 - 0.25, lines, ha="center", va="center", fontsize=fs, linespacing=1.35)
+
+    def arrow(x1, y1, x2, y2):
+        ax.add_patch(FancyArrowPatch((x1, y1), (x2, y2), arrowstyle="-|>", mutation_scale=20, color=MUTED, lw=2))
+
+    ax.text(0.1, 7.0, "TRAINING  (offline, once there are votes)", fontsize=15, fontweight="bold", color="#115e59")
+    box(0.1, 4.3, 3.3, 2.3, "1. Votes", "a user sees a ranked list" + NL + "and presses like / dislike" + NL +
+        "like = 1, dislike = 0", "#e2e8f0")
+    box(4.1, 4.3, 3.9, 2.3, "2. Signals per room", "7 numbers in 0–1:" + NL + "price fit · ML value · closeness" + NL +
+        "amenities · not sublet" + NL + "has address · district ok", "#bfdbfe")
+    box(8.7, 4.3, 3.4, 2.3, "3. Logistic regression", "predicts P(like) from" + NL + "the 7 signals; keep the" + NL +
+        "non-negative coefficients", "#99f6e4")
+    box(12.7, 4.3, 3.2, 2.3, "4. Weights", "scale to sum 1:" + NL + "w₁ … w₇" + NL + "(saved to a file)", "#ddd6fe")
+    for x1, x2 in [(3.4, 4.1), (8.0, 8.7), (12.1, 12.7)]:
+        arrow(x1, 5.45, x2, 5.45)
+
+    ax.text(0.1, 3.5, "RANKING  (every search in the app)", fontsize=15, fontweight="bold", color="#115e59")
+    box(0.1, 0.4, 3.3, 2.7, "Hard filters", "budget · district" + NL + "min area · amenities" + NL + "chosen campus ≤ N km" + NL +
+        "→ candidate rooms", "#e2e8f0")
+    box(4.1, 0.4, 3.9, 2.7, "Score each room", "score = w₁·price fit" + NL + "+ w₂·value + w₃·closeness" + NL +
+        "+ w₄·amenities + w₅…w₇·quality", "#bfdbfe")
+    box(8.7, 0.4, 3.4, 2.7, "Sort", "highest score first;" + NL + "one room per building", "#99f6e4")
+    box(12.7, 0.4, 3.2, 2.7, "Show + collect", "cards with like/dislike;" + NL + "new votes → retrain", "#ddd6fe")
+    for x1, x2 in [(3.4, 4.1), (8.0, 8.7), (12.1, 12.7)]:
+        arrow(x1, 1.75, x2, 1.75)
+    arrow(14.3, 4.3, 14.3, 3.1)   # weights feed the scoring ... drawn to the scoring column
+    ax.add_patch(FancyArrowPatch((14.3, 3.2), (6.05, 3.2), connectionstyle="arc3,rad=0", arrowstyle="-|>",
+                                 mutation_scale=1, color="none", lw=0))
+    ax.plot([14.3, 6.05], [3.2, 3.2], color=MUTED, lw=2, ls=(0, (6, 4)))
+    arrow(6.05, 3.2, 6.05, 3.1)
+    ax.text(10.2, 3.28, "learned weights are used here", fontsize=12, color=MUTED, ha="center")
+    save(fig, "m6_ranker_how.png")
+
+
+def fig_ranker_learned(d):
+    info = ranker_info()
+    w = active_weights()
+    fig, (a, b) = plt.subplots(1, 2, figsize=(15.5, 6.4), gridspec_kw={"width_ratios": [1, 1.15], "wspace": 0.5})
+    y = np.arange(len(SIGNALS))[::-1]
+    vals = [w.get(k, 0) for k in SIGNALS]
+    a.barh(y, vals, color=TEAL, edgecolor=MUTED)
+    for yy, v in zip(y, vals):
+        a.text(v + 0.01, yy, f"{v:.2f}", va="center", fontsize=13, fontweight="bold")
+    a.set_yticks(y, [SIGNAL_NAMES[k] for k in SIGNALS])
+    a.set_xlim(0, 0.6)
+    a.set_xlabel("Learned weight (sum = 1)")
+    a.set_title("What the ranker learned", loc="left", fontweight="bold", fontsize=15)
+
     r = recommend(d, 4_000_000, ["Cầu Giấy"], need=["air_conditioner"], top=5)
-    parts = [("price", "Price fit", "s_price", GREEN), ("value", "Value vs market", "s_value", BLUE),
-             ("distance", "Closeness to centre", "s_dist", AMBER), ("amenity", "Amenities", "s_amenity", ROSE)]
-    fig, ax = plt.subplots(figsize=(13, 5.8))
-    labels = [f"#{i}  {p / 1e6:.1f} M · {a:.0f} m²" for i, (p, a) in enumerate(zip(r.price_vnd, r.area_est), 1)][::-1]
+    parts = [("price", "s_price", GREEN), ("value", "s_value", BLUE), ("distance", "s_dist", AMBER),
+             ("amenity", "s_amenity", ROSE)]
+    labels = [f"#{i}  {p / 1e6:.1f} M · {ar:.0f} m²" for i, (p, ar) in enumerate(zip(r.price_vnd, r.area_est), 1)][::-1]
     left = np.zeros(len(r))
-    for key, name, col, color in parts:
-        w = WEIGHTS[key] * r[col].values[::-1]
-        ax.barh(labels, w, left=left, color=color, edgecolor="white", label=f"{name} (weight {WEIGHTS[key]:.2f})")
-        left += w
-    for y, tot in enumerate(left):
-        ax.text(tot + 0.01, y, f"{tot:.2f}", va="center", fontweight="bold", fontsize=15)
-    ax.set_xlim(0, 1.05)
-    ax.set_xlabel("Score (0–1)")
-    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=2, frameon=False, fontsize=13)
-    ax.set_title("Top 5 rooms for a sample query: budget 4 M VND, Cầu Giấy, air conditioning", loc="left",
-                 fontweight="bold", fontsize=16)
-    save(fig, "s07_score_anatomy.png")
+    for key, col, color in parts:
+        x = w.get(key, 0) * r[col].values[::-1]
+        b.barh(labels, x, left=left, color=color, edgecolor="white", label=SIGNAL_NAMES[key])
+        left += x
+    x = sum(w.get(k, 0) * r[k].values[::-1] for k in QUALITY)
+    b.barh(labels, x, left=left, color="#a78bfa", edgecolor="white", label="Quality signals (3)")
+    left += x
+    for yy, tot in enumerate(left):
+        b.text(tot + 0.01, yy, f"{tot:.2f}", va="center", fontweight="bold", fontsize=14)
+    b.set_xlim(0, 1.08)
+    b.set_xlabel("Score (0–1)")
+    b.legend(loc="upper center", bbox_to_anchor=(0.5, -0.14), ncol=3, frameon=False, fontsize=11)
+    b.set_title("Top 5 for “4 M budget, Cầu Giấy, air conditioning”", loc="left", fontweight="bold", fontsize=15)
+    src = (info or {}).get("source", "none")
+    fig.text(0.5, -0.16, f"Trained on 250 votes (source: {src}, i.e. given by an AI assistant, not by users). The ML value signal got "
+             "weight 0; quality signals are ≈1 for most rooms, so they mainly push sublet ads down.",
+             ha="center", fontsize=12, color="#b91c1c", fontweight="bold")
+    save(fig, "m6_ranker_learned.png")
+
+
+# ------------------------------------------------------------------ slide 6: text model (search + similar rooms)
+def fig_text_model(d):
+    from src.recsys.similar import Index
+    idx = Index(d)
+    query = "phòng có gác xép ban công"
+    cand = d.listing_id.tolist()
+    sim = idx.text_scores(query, cand)
+    top = np.argsort(-sim)[:7]
+    seed = d[d.title.str.contains("Studio", case=False, na=False) & d.platform.eq("Phongtro123.com")].listing_id.iloc[3]
+    sim_ids = idx.similar(seed, k=6)
+    seed_row = d[d.listing_id == seed].iloc[0]
+    cut = lambda t, n=46: (t[:n] + "…") if len(t) > n else t   # noqa: E731
+    fig, (a, b) = plt.subplots(1, 2, figsize=(16, 6.2), gridspec_kw={"wspace": 0.6})
+    ya = np.arange(len(top))[::-1]
+    a.barh(ya, sim[top], color=BLUE, edgecolor=MUTED)
+    a.set_yticks(ya, [cut(d.title.iloc[i]) for i in top], fontsize=11)
+    for yy, i in zip(ya, top):
+        a.text(sim[i] + 0.005, yy, f"{sim[i]:.2f}", va="center", fontsize=12)
+    a.set_xlim(0, max(sim[top]) * 1.15)
+    a.set_xlabel("Cosine similarity to the query (TF-IDF)")
+    a.set_title(f"Free-text search: “{query}”", loc="left", fontweight="bold", fontsize=15)
+    rows = d.set_index("listing_id").loc[sim_ids]
+    yb = np.arange(len(rows))[::-1]
+    b.barh(yb, np.linspace(1, 0.55, len(rows)), color=TEAL, alpha=0.0)
+    b.axis("off")
+    b.set_title("Similar rooms to this one", loc="left", fontweight="bold", fontsize=15)
+    b.text(0, 1.0, f"Seed: {cut(seed_row.title, 52)}", fontsize=12.5, fontweight="bold", transform=b.transAxes, va="top")
+    b.text(0, 0.95, f"{seed_row.price_vnd / 1e6:.1f} M · {seed_row.area_est:.0f} m² · {seed_row.district}", fontsize=12,
+           color=MUTED, transform=b.transAxes, va="top")
+    for i, (lid, r) in enumerate(rows.iterrows()):
+        yy = 0.82 - i * 0.12
+        b.text(0, yy, f"{i + 1}. {cut(r.title, 52)}", fontsize=12, transform=b.transAxes, va="top")
+        b.text(0, yy - 0.05, f"    {r.price_vnd / 1e6:.1f} M · {r.area_est:.0f} m² · {r.district}", fontsize=11,
+               color=MUTED, transform=b.transAxes, va="top")
+    fig.suptitle("Text model: TF-IDF on character n-grams powers search and “similar rooms”", fontsize=18,
+                 fontweight="bold", y=1.03)
+    save(fig, "m5_text_model.png")
 
 
 # ------------------------------------------------------------------ slide 8: price map (stand-in for the app map)
@@ -236,52 +349,178 @@ def fig_price_map(d):
     ax.set_title("Where the rooms are (inner Hanoi)", loc="left", fontweight="bold", fontsize=17)
     fig.text(0.5, 0.06, "© OpenStreetMap contributors · many listings share a ward-centre coordinate, so points are slightly jittered",
              ha="center", fontsize=11, color=MUTED)
-    save(fig, "s08_price_map.png")
+    save(fig, "x1_price_map.png")
 
 
-# ------------------------------------------------------------------ slide 9: evaluation
-def fig_eval():
-    v = pd.read_csv("data/recsys_eval_labels_v2.csv")
-    p = v.groupby(["persona", "config"]).rating_1_5.mean().unstack()
-    base, dflt = [c for c in p.columns if c.startswith("baseline")][0], [c for c in p.columns if c.startswith("mặc định")][0]
-    p = p.sort_values(dflt)
-    fig, (a, b) = plt.subplots(1, 2, figsize=(15, 6.4), gridspec_kw={"width_ratios": [1.7, 1], "wspace": 0.35})
-    y = np.arange(len(p))
-    a.barh(y + 0.19, p[base], height=0.36, color="#cbd5e1", edgecolor=MUTED, label=f"Cheapest first (mean {p[base].mean():.2f})")
-    a.barh(y - 0.19, p[dflt], height=0.36, color=TEAL, edgecolor=MUTED, label=f"Our score (mean {p[dflt].mean():.2f})")
-    a.set_yticks(y, [PERSONA.get(i, i) for i in p.index])
-    a.set_xlim(0, 5)
-    a.set_xlabel("Mean rating of the top 5 results (1–5)")
-    a.legend(loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=2, frameon=False, fontsize=13)
-    a.set_title("Our score wins on 10 of 10 personas (+%.2f)" % (p[dflt] - p[base]).mean(), loc="left", fontweight="bold")
-    stages = ["Initial", "Shared-room ads\nremoved + fake\ncoordinate", "Price score\nfixed (typical\nprice)"]
-    means, p4 = [2.60, 3.16, 3.52], [24, 28, 52]
-    b.plot(stages, means, marker="o", color=TEAL, lw=3, ms=11)
-    for i, (m, q) in enumerate(zip(means, p4)):
-        b.text(i, m + 0.17, f"{m:.2f}\n({q}% rated ≥ 4)", ha="center", fontsize=12.5)
-    b.set_ylim(2, 4.3)
-    b.set_xlim(-0.45, 2.45)
-    b.set_ylabel("Mean rating (5 personas)")
-    b.set_title("Rating rises after each fix", loc="left", fontweight="bold")
-    b.tick_params(axis="x", labelsize=12)
-    fig.text(0.5, -0.12, "Caveat: ratings were assigned by an AI assistant from listing text, not by real users; not blind. 10 personas.",
-             ha="center", fontsize=13, color="#b91c1c", fontweight="bold")
-    save(fig, "s09_evaluation.png")
+# ------------------------------------------------------------------ slide 6: ML fair-price model
+def fig_price_model(d):
+    from src.recsys.price_model import REPORT, enrich
+    if "price" not in REPORT:   # re-fit once to get the cross-validated errors (no files written)
+        enrich(pd.read_csv("data/unified_hanoi_rentals_dedup.csv", low_memory=False), save=False)
+    rep = REPORT["price"]
+    fig, (a, b) = plt.subplots(1, 2, figsize=(15, 6.2), gridspec_kw={"width_ratios": [1, 1.15], "wspace": 0.3})
+    names = ["Median by\nroom type\n× district", "Ridge model\n(earlier\npipeline)*", "Our ML model\n(gradient\nboosting)"]
+    vals = [rep["mape_group_median"], rep["mape_ridge_same_rows"], rep["mape_ml"]]
+    a.bar(names, vals, color=["#cbd5e1", "#cbd5e1", TEAL], edgecolor=MUTED)
+    for x, v in enumerate(vals):
+        a.text(x, v + 0.8, f"{v:.1f}%", ha="center", fontsize=15, fontweight="bold")
+    a.set_ylabel("Mean absolute % error of predicted rent")
+    a.set_ylim(0, max(vals) * 1.2)
+    a.set_title("Fair-price error (5-fold, out-of-fold)", loc="left", fontweight="bold")
+    a.tick_params(axis="x", labelsize=12)
+    a.text(0, -0.24, f"* Ridge judged on the {rep['n_ridge']:,} rows where it exists, in-sample; ML on the same rows: "
+           f"{rep['mape_ml_same_rows']:.1f}%", transform=a.transAxes, fontsize=11, color=MUTED)
+    t = d[d.duplicate_of.isna() & ~d.is_shared] if "duplicate_of" in d else d[~d.is_shared]
+    t = t.sample(min(3000, len(t)), random_state=0)
+    b.scatter(t.fair_price / 1e6, t.price_vnd / 1e6, s=8, alpha=0.35, color=BLUE, linewidths=0)
+    lim = [0.5, 15]
+    b.plot(lim, lim, color=INK, lw=1.5)
+    b.fill_between(lim, [v * 0.85 for v in lim], [v * 1.15 for v in lim], color=TEAL, alpha=0.12)
+    b.set_xscale("log")
+    b.set_yscale("log")
+    b.set_xlim(*lim)
+    b.set_ylim(*lim)
+    ticks = [1, 2, 3, 5, 8, 12]
+    b.set_xticks(ticks, [str(x) for x in ticks])
+    b.set_yticks(ticks, [str(x) for x in ticks])
+    b.set_xlabel("Predicted fair rent (M VND)")
+    b.set_ylabel("Asked rent (M VND)")
+    b.set_title("Asked vs fair rent (shaded: ±15% = 'fair')", loc="left", fontweight="bold")
+    b.text(0.6, 11, "above: dearer than\nsimilar rooms", fontsize=12, color="#9f1239")
+    b.text(5, 0.7, "below: cheaper than\nsimilar rooms", fontsize=12, color="#115e59")
+    fig.suptitle("An ML model estimates each room's fair rent → the 'value for money' score", fontsize=18,
+                 fontweight="bold", y=1.03)
+    save(fig, "m4_price_model.png")
+
+
+# ------------------------------------------------------------------ slide 8: how the ranker is evaluated
+def fig_metrics_toy():
+    """A worked example of precision@5 and NDCG@10 on one search."""
+    fig, ax = plt.subplots(figsize=(15, 5.2))
+    ax.set_xlim(0, 15)
+    ax.set_ylim(0, 5.2)
+    ax.axis("off")
+    ranking = [1, 1, 0, 1, 0, 1, 0, 0, 1, 0]   # one ranked list, 1 = liked
+    disc = 1 / np.log2(np.arange(2, 12))
+    ax.text(0.1, 4.8, "One search, 10 rooms in the order the ranker puts them (green = liked, rose = disliked)",
+            fontsize=14, fontweight="bold")
+    for i, (g, dsc) in enumerate(zip(ranking, disc)):
+        x = 0.1 + i * 1.45
+        ax.add_patch(FancyBboxPatch((x, 3.1), 1.25, 1.1, boxstyle="round,pad=0.02,rounding_size=0.1",
+                                    fc=GREEN if g else ROSE, ec=MUTED, lw=1.2))
+        ax.text(x + 0.62, 3.86, f"rank {i + 1}", ha="center", fontsize=11, color=MUTED)
+        ax.text(x + 0.62, 3.45, "like" if g else "dislike", ha="center", fontsize=13, fontweight="bold")
+        ax.text(x + 0.62, 2.8, f"×{dsc:.2f}", ha="center", fontsize=11.5, color=INK)
+    ax.text(0.1, 2.35, "Each position is discounted by 1 / log₂(rank + 1): a like at rank 1 counts fully, at rank 10 only 0.29.",
+            fontsize=12, color=MUTED)
+    dcg = sum(g * dsc for g, dsc in zip(ranking, disc))
+    ideal = sorted(ranking, reverse=True)
+    idcg = sum(g * dsc for g, dsc in zip(ideal, disc))
+    p5 = sum(ranking[:5]) / 5
+    lines = [("Precision@5", f"liked rooms among the first 5 ÷ 5 = {sum(ranking[:5])} ÷ 5 = {p5:.2f}", TEAL),
+             ("DCG", f"sum of discounted likes = {dcg:.2f}", INK),
+             ("Ideal DCG", f"all {sum(ranking)} liked rooms first = {idcg:.2f}", INK),
+             ("NDCG@10", f"DCG ÷ ideal DCG = {dcg:.2f} ÷ {idcg:.2f} = {dcg / idcg:.2f}   (1.00 = perfect order)", TEAL)]
+    for i, (name, txt, col) in enumerate(lines):
+        ax.text(0.1, 1.75 - i * 0.5, name + ":", fontsize=14, fontweight="bold", color=col)
+        ax.text(2.6, 1.75 - i * 0.5, txt, fontsize=14, color=INK)
+    save(fig, "m7a_metrics_explained.png")
+
+
+def fig_feedback_eval():
+    from src.recsys import feedback, ltr
+    ev = feedback.events(db="data/recsys_feedback_ai.sqlite")
+    votes = ev[ev.action.isin(["up", "down"])]
+    present = votes.listing_id.isin(set(load().listing_id)).mean()
+    if present < 0.9:   # ltr.labelled() joins the quality signals by listing_id; missing rooms would silently get 1.0
+        print(f"m7_evaluation.png / x4_per_search.png NOT redrawn: only {present:.0%} of the voted rooms are in the "
+              "current data, so the evaluation would be distorted; keeping the figures made on the data the votes were cast on")
+        return
+    v = ltr.labelled(ev)
+    rep, w = ltr.evaluate(v)
+    per = ltr.per_search(v)
+    caveat = ("Caveat: votes were given by an AI assistant from listing text (not by real users); "
+              "only 10 searches, so differences must be judged with their intervals.")
+
+    fig, (a, b) = plt.subplots(1, 2, figsize=(15, 6.2), gridspec_kw={"width_ratios": [1.15, 1], "wspace": 0.45})
+    rankers = [("Random order", "random", "#e2e8f0"), ("Cheapest first", "cheapest_first", "#cbd5e1"),
+               ("ML ranker (held-out)", "learned_cv", TEAL)]
+    x = np.arange(2)
+    for i, (name, key, col) in enumerate(rankers):
+        vals = [rep[key]["ndcg@10"], rep[key]["p@5"]]
+        bars = a.bar(x + (i - 1) * 0.27, vals, width=0.25, color=col, edgecolor=MUTED, label=name)
+        for bx, val in zip(bars, vals):
+            a.text(bx.get_x() + bx.get_width() / 2, val + 0.015, f"{val:.2f}", ha="center", fontsize=12)
+    a.set_xticks(x, ["NDCG@10", "Precision@5"])
+    a.set_ylim(0, 1.08)
+    a.legend(loc="upper center", bbox_to_anchor=(0.5, -0.1), ncol=3, frameon=False, fontsize=11)
+    a.set_title(f"{rep['labels']} votes on {len(per)} searches (higher = better)", loc="left", fontweight="bold", fontsize=15)
+    comps = [("ML ranker vs random order", "learned", "random", BLUE),
+             ("ML ranker vs cheapest first", "learned", "cheapest", TEAL)]
+    b.set_xlim(-0.1, 0.5)
+    b.set_ylim(-0.3, 2.3)
+    for i, (name, c1, c2, col) in enumerate(comps):
+        yy = 1.5 - i * 1.2   # one row per comparison: title on top, interval below, numbers to the right
+        r = ltr.bootstrap_diff(per, c1, c2)
+        b.text(-0.1, yy + 0.38, name, fontsize=14, fontweight="bold", va="center")
+        b.plot([r["lo"], r["hi"]], [yy, yy], color=col, lw=7, solid_capstyle="round", zorder=2)
+        b.plot(r["mean"], yy, "o", color=INK, ms=12, zorder=3)
+        b.text(r["hi"] + 0.02, yy, f"{r['mean']:+.2f}  [{r['lo']:+.2f}, {r['hi']:+.2f}]", va="center", fontsize=12.5)
+    b.axvline(0, color="#b91c1c", lw=1.8, ls="--", zorder=1)
+    b.text(0.003, 2.2, "0 = no gain", fontsize=11, color="#b91c1c", va="center")
+    b.set_yticks([])
+    b.spines["left"].set_visible(False)
+    b.set_xlabel("Gain in NDCG@10 (dot = mean, bar = 95% bootstrap interval)")
+    b.set_title("Is the gain real?  Both intervals exclude 0 → yes", loc="left", fontweight="bold", fontsize=15)
+    fig.text(0.5, -0.08, caveat, ha="center", fontsize=12, color="#b91c1c", fontweight="bold")
+    save(fig, "m7_evaluation.png")
+
+    # backup: per-search view
+    fig, (a, b) = plt.subplots(1, 2, figsize=(15, 6.2), gridspec_kw={"width_ratios": [1.3, 1], "wspace": 0.3})
+    per = per.sort_values("learned")
+    y = np.arange(len(per))
+    for i, r in enumerate(per.itertuples()):
+        a.plot([min(r.cheapest, r.learned), max(r.cheapest, r.learned)], [i, i], color="#cbd5e1", lw=3, zorder=1)
+    a.scatter(per.cheapest, y, s=130, color="#94a3b8", zorder=3, label="Cheapest first")
+    a.scatter(per.random, y, s=70, marker="D", color="#e2b714", zorder=3, label="Random order (expected)")
+    a.scatter(per.learned, y, s=140, color=TEAL, zorder=3, label="ML ranker (held-out)")
+    a.set_yticks(y, [f"search {s.replace('ai-q', '')}" for s in per.search])
+    a.set_xlabel("NDCG@10 of that search")
+    a.set_xlim(0.2, 1.05)
+    a.legend(loc="upper center", bbox_to_anchor=(0.5, -0.12), ncol=3, frameon=False, fontsize=11)
+    a.set_title(f"Per search: ML ranker beats cheapest-first in {(per.learned > per.cheapest).sum()} of {len(per)}",
+                loc="left", fontweight="bold", fontsize=15)
+    v = v.assign(bucket=np.where(v["rank"] <= 10, "Top 10", "Rank 11–25"))
+    share = v.groupby("bucket").label.mean().reindex(["Top 10", "Rank 11–25"]) * 100
+    b.bar(share.index, share.values, color=[TEAL, "#cbd5e1"], edgecolor=MUTED)
+    for i, val in enumerate(share.values):
+        b.text(i, val + 1.5, f"{val:.0f}%", ha="center", fontsize=15, fontweight="bold")
+    b.set_ylim(0, 100)
+    b.set_ylabel("Share rated 'like' (%)")
+    b.set_title("Like rate in the lists that were rated", loc="left", fontweight="bold", fontsize=15)
+    fig.text(0.5, -0.06, caveat, ha="center", fontsize=12, color="#b91c1c", fontweight="bold")
+    save(fig, "x4_per_search.png")
 
 
 def main():
-    raw = pd.read_csv("data/unified_hanoi_rentals.csv", low_memory=False)
+    raw = pd.read_csv("data/unified_hanoi_rentals_fresh.csv", low_memory=False)
     fixed = pd.read_csv("data/unified_hanoi_rentals_geofixed.csv", low_memory=False)
     dd = pd.read_csv("data/unified_hanoi_rentals_dedup.csv", low_memory=False)
     d = load()
-    fig_pipeline(len(raw), int(dd.duplicate_of.isna().sum()))
+    own = d[~d.is_shared]   # distinct, non-shared rooms: what the fair-price model is judged on
+    mape = float((abs(own.fair_price - own.price_vnd) / own.price_vnd).mean() * 100)
+    fig_pipeline(len(raw), int(dd.duplicate_of.isna().sum()), mape)
     fig_sources(raw)
     fig_fallback(raw, fixed)
     fig_dedup(dd)
     print("spearman:", {k: round(v, 3) for k, v in fig_prices(d).items()})
-    fig_score(d)
+    fig_price_model(d)
+    fig_text_model(d)
+    fig_ranker_how()
+    fig_ranker_learned(d)
+    fig_metrics_toy()
     fig_price_map(d)
-    fig_eval()
+    fig_feedback_eval()
 
 
 if __name__ == "__main__":

@@ -29,9 +29,9 @@ sources:
         start_url: "https://phongtro123.com/tinh-thanh/ho-chi-minh"
         page_pattern: "https://phongtro123.com/tinh-thanh/ho-chi-minh?page={page}"
     rate_limit:
-      min_delay_sec: 0.1
-      max_delay_sec: 0.25
-      max_concurrency: 10
+      min_delay_sec: 1.0
+      max_delay_sec: 2.0
+      max_concurrency: 3
     max_images_per_listing: 8
 
   alonhadat:

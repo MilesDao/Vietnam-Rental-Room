@@ -3,6 +3,8 @@ import gzip
 import logging
 import os
 import re
+import sqlite3
+import sys
 from pathlib import Path
 
 from bs4 import BeautifulSoup
@@ -14,12 +16,21 @@ from src.parse.mogi_parser import parse_detail_page
 _PHONE_RE = re.compile(r"PhoneFormat\('(\d{9,11})'\)")
 _AGENT_HREF_RE = re.compile(r"/moi-gioi/(\d{9,11})-[^\"']*")
 
+def real_urls(db_path="data/mogi_seen_urls.db"):
+    """listing_id ('mogi_<n>' or '<n>') -> the real ad URL the crawler fetched."""
+    if not Path(db_path).exists():
+        return {}
+    with sqlite3.connect(db_path) as c:
+        return {str(i).replace("mogi_", ""): u for i, u in c.execute("SELECT listing_id, url FROM seen_urls")}
+
+
 def main():
     logging.basicConfig(level=logging.INFO)
     log = logging.getLogger("export")
 
     raw_dir = Path("data/raw/html/mogi")
-    out_csv = Path("data/csv/mogi_hanoi_extracted.csv")
+    out_csv = Path(sys.argv[1] if len(sys.argv) > 1 else "data/csv/mogi_hanoi_extracted.csv")
+    urls = real_urls()
     out_csv.parent.mkdir(parents=True, exist_ok=True)
 
     columns = [
@@ -47,8 +58,8 @@ def main():
                 with gzip.open(filepath, "rt", encoding="utf-8") as gz:
                     html = gz.read()
                 
-                # We need a dummy URL for the parser
-                url = f"https://mogi.vn/dummy-id{filepath.name.replace('mogi_', '').replace('.html.gz', '')}"
+                native = filepath.name.replace('mogi_', '').replace('.html.gz', '')
+                url = urls.get(native, f"https://mogi.vn/dummy-id{native}")   # dummy only feeds the parser
                 parsed = parse_detail_page(html, url)
                 
                 # Check if it's Ha Noi
@@ -107,7 +118,7 @@ def main():
                     "contact_zalo": phone,
                     "image_count": parsed.get("n_images", 0),
                     "image_urls": " | ".join(parsed.get("image_urls", [])),
-                    "listing_url": url,
+                    "listing_url": urls.get(native, ""),   # never publish the dummy URL
                 }
                 writer.writerow(row)
             except Exception as e:

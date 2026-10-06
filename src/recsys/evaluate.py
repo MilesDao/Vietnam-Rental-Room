@@ -6,9 +6,12 @@ Compares weight settings on behavioural metrics, plus a baseline that just sorts
 These metrics describe what each setting surfaces; they do not prove one is "better" --
 the hand-labelling sheet (data/recsys_eval_labels.csv) is for that.
 """
+import json
+
 import numpy as np
 import pandas as pd
 
+from src.recsys import feedback, ltr
 from src.recsys.recommend import WEIGHTS, load, recommend
 
 M = 1_000_000
@@ -98,6 +101,14 @@ def main():
                 "Trung bình trên các persona có kết quả. 'persona_du_n' = số persona nhận đủ 10 kết quả.\n\n")
         f.write(summ.round(2).to_markdown() + "\n\n")
         f.write("Persona không đủ 10 kết quả: " + (", ".join(f"{a} ({b})" for a, b in short.values) or "không có") + "\n")
+        f.write("\nThe persona table above is synthetic (behavioural measures), not user feedback.\n")
+        f.write("\n## Real user feedback (👍/👎 collected in the app)\n\n")
+        votes = ltr.labelled(feedback.events())
+        if votes.empty:
+            f.write("No feedback collected yet; the ranking still uses the hand-set weights.\n")
+        else:   # NDCG@10 / precision@5: hand weights vs cheapest-first vs learned weights (grouped CV by session)
+            rep, _ = ltr.evaluate(votes)
+            f.write("```\n" + json.dumps(rep, ensure_ascii=False, indent=1) + "\n```\n")
     print(summ.round(2).to_string())
     print(short.to_string(index=False))
 

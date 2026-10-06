@@ -27,6 +27,7 @@ import csv
 import gzip
 import logging
 import sqlite3
+import sys
 from pathlib import Path
 
 from src.export.text_features import extract_amenity_features, extract_utility_prices, get_amenities_list
@@ -36,6 +37,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 RAW_DIR = REPO_ROOT / "data" / "raw" / "html" / "alonhadat"
 DB_PATH = REPO_ROOT / "data" / "alonhadat_seen_urls.db"
 OUT_CSV = REPO_ROOT / "data" / "csv" / "alonhadat_hanoi_extracted.csv"
+if len(sys.argv) > 1:   # optional output path, so a re-export does not overwrite data/csv
+    OUT_CSV = Path(sys.argv[1])
 
 COLUMNS = [
     "platform", "listing_id", "title", "district", "ward", "address",
