@@ -8,7 +8,8 @@ distinct rooms (no cross-platform duplicates) that are not per-bed/shared ads. E
 building's near-copies are never on both sides), so a room's own price never leaks into its fair price;
 other rows are predicted by a model fit on all training rows.
 
-- Area model: replaces the house-type x price-quintile median only if its CV error is lower. It uses the
+- Area model: replaces the house-type x price-quintile median only if its CV error is clearly lower (the 95%
+  cluster-bootstrap interval of the MAE difference lies below zero). It uses the
   price, so its area_est is for display/scoring only and is NOT an input of the fair-price model.
 - Fair-price model: uses the stated area (missing when unknown), fair_price, value_pct = (price / fair_price - 1) * 100 (negative = cheaper than similar
   rooms), and market_value_tier at +-15 %. This replaces the branch's Ridge residual, which was missing for
@@ -86,6 +87,22 @@ def _group_median_oof(keys, y, groups=None, k=5):
     return pred
 
 
+def cluster_ci(err_a, err_b, groups, n=1000, seed=0):
+    """Cluster bootstrap (resample whole fold groups) of mean(err_a), mean(err_b) and mean(err_a - err_b).
+    Returns {name: [lo, hi]} as 95% percentile intervals."""
+    err_a, err_b = np.asarray(err_a, float), np.asarray(err_b, float)
+    codes, uniq = pd.factorize(pd.Series(groups))
+    sa = np.bincount(codes, err_a, len(uniq))
+    sb = np.bincount(codes, err_b, len(uniq))
+    cnt = np.bincount(codes, minlength=len(uniq))
+    rng = np.random.default_rng(seed)
+    draws = rng.integers(0, len(uniq), (n, len(uniq)))
+    w = np.apply_along_axis(np.bincount, 1, draws, minlength=len(uniq))   # times each group is drawn
+    a, b, c = w @ sa, w @ sb, w @ cnt
+    pct = lambda x: [round(float(v), 4) for v in np.percentile(x, [2.5, 97.5])]
+    return {"a": pct(a / c), "b": pct(b / c), "diff": pct((a - b) / c)}
+
+
 def _train_rows(d):
     distinct = d.duplicate_of.isna() if "duplicate_of" in d else True
     return distinct & ~d.is_shared & d.price_vnd.notna()
@@ -103,8 +120,10 @@ def add_area(d):
     base = _group_median_oof((d.house_type.fillna("") + "|" + q)[train].values, d.loc[train, "area_m2"].values, groups)
     true = d.loc[train, "area_m2"].values
     mae_ml, mae_base = float(np.mean(np.abs(ml - true))), float(np.mean(np.abs(base - true)))
-    REPORT["area"] = {"n_train": int(train.sum()), "mae_ml_m2": round(mae_ml, 2), "mae_group_median_m2": round(mae_base, 2)}
-    if mae_ml < mae_base:
+    ci = cluster_ci(np.abs(ml - true), np.abs(base - true), groups)
+    REPORT["area"] = {"n_train": int(train.sum()), "mae_ml_m2": round(mae_ml, 2), "mae_group_median_m2": round(mae_base, 2),
+                      "ci95_ml": ci["a"], "ci95_group_median": ci["b"], "ci95_diff": ci["diff"]}
+    if ci["diff"][1] < 0:   # use the model only if its gain is clear (whole interval below zero)
         guess = np.exp(_model().fit(X[train], y).predict(X))
         method = "gradient-boosted trees"
     else:
@@ -143,6 +162,8 @@ def add_fair_price(d, save=True):
            "mae_ml_vnd": round(float(np.mean(np.abs(ml - price))), -3),
            "mape_group_median": round(float(ape_base.mean()) * 100, 1),
            "mae_group_median_vnd": round(float(np.mean(np.abs(base - price))), -3)}
+    ci = cluster_ci(ape_ml * 100, ape_base * 100, groups)
+    rep.update(ci95_mape_ml=ci["a"], ci95_mape_group_median=ci["b"], ci95_mape_diff=ci["diff"])
     stated = d.loc[train, "area_m2"].notna().values
     for name, m in (("area_stated", stated), ("area_missing", ~stated)):
         rep[name] = {"n": int(m.sum()), "mape_ml": round(float(ape_ml[m].mean()) * 100, 1),

@@ -235,3 +235,10 @@ def test_cross_site_rule_needs_same_poster_price_and_place():
     assert out[["YH_1", "al_1"]].isna().sum() == 1 and out[["YH_1", "al_1"]].dropna().iloc[0] in ("YH_1", "al_1")
     assert pd.isna(out["al_2"]) and pd.isna(out["mogi_9"])   # same poster but other price / other place
     assert mark_duplicates(df).duplicate_of.isna().all()   # same-platform mode never uses the rule
+
+
+def test_short_district_gives_one_spelling():
+    from src.clean.sample_schema import short_district as s
+    assert s("Quận Cầu Giấy") == s("cau giay") == s("Cầu Giấy") == s("CầuGiấy") == "Cầu Giấy"
+    assert s("Thị xã Sơn Tây") == "Sơn Tây" and s("Huyện Thanh Trì") == "Thanh Trì"
+    assert s("Chưa rõ") is None and s("Cầu Giấy, Bắc Từ Liêm") is None and s(None) is None

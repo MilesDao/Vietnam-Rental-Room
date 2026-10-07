@@ -122,16 +122,20 @@ def price_txt(v):
     return f"{v / 1e6:.2f}".rstrip("0").rstrip(".").replace(".", ",") + " triệu/tháng"
 
 
+HINT_MIN_GAP = 25   # % ; measured fair-price error (MAPE 25.5%)
+
+
 def value_txt(row):
     """What the ML fair-price model says about this rent (src/recsys/price_model.py)."""
     v = getattr(row, "value_pct", np.nan)
     if pd.isna(v):
         return ""
-    if v <= -5:
+    # The model's typical error is ~25% (docs/report_numbers.json), so a smaller gap is within the noise.
+    if v <= -HINT_MIN_GAP:
         return f"Rẻ hơn ~{-v:.0f}% so với phòng tương tự"
-    if v >= 5:
+    if v >= HINT_MIN_GAP:
         return f"Đắt hơn ~{v:.0f}% so với phòng tương tự"
-    return "Giá sát mặt bằng phòng tương tự"
+    return f"Giá trong khoảng thường thấy (±{HINT_MIN_GAP}%)"
 
 
 def popup_html(row):

@@ -103,6 +103,7 @@ def _district_core(value: str) -> str:
 
 
 _DISTRICT_BY_CORE = {_district_core(d): d for d in HANOI_DISTRICTS}
+_DISTRICT_BY_SPACELESS_CORE = {k.replace(" ", ""): v for k, v in _DISTRICT_BY_CORE.items()}
 
 
 def _clean_str(value: object) -> str | None:
@@ -123,6 +124,15 @@ def normalize_district(value: object) -> str | None:
     if not isinstance(value, str) or not value.strip():
         return None
     return _DISTRICT_BY_CORE.get(_district_core(value))
+
+
+def short_district(value: object) -> str | None:
+    """One spelling per district for the recommender: "Quận Cầu Giấy" / "cau giay" -> "Cầu Giấy".
+    Anything that is not one of Hanoi's 30 units ("Chưa rõ", "Cầu Giấy, Bắc Từ Liêm") -> None."""
+    canonical = normalize_district(value)
+    if not canonical and isinstance(value, str):   # district polygons spell names without spaces: "CầuGiấy"
+        canonical = _DISTRICT_BY_SPACELESS_CORE.get(_district_core(value).replace(" ", ""))
+    return re.sub(r"^(Quận|Huyện|Thị xã)\s+", "", canonical) if canonical else None
 
 
 def district_from_address(address: object) -> str | None:

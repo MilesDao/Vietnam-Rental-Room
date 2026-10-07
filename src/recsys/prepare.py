@@ -24,10 +24,10 @@ import numpy as np
 import pandas as pd
 
 from src.clean.link_check import mark_bad_links, parse_images
-from src.clean.sample_schema import canonical_house_type, mark_duplicates
+from src.clean.sample_schema import canonical_house_type, mark_duplicates, short_district
 from src.crawl.pii import hash_value
 from src.recsys import price_model
-from src.recsys.regeocode_fallback import repair
+from src.recsys.regeocode_fallback import district_of, load_polys, repair
 
 ROOT = Path(__file__).resolve().parents[2]
 FRESH = ROOT / "data/unified_hanoi_rentals_fresh.csv"   # python -m src.pipelines.merge_fresh
@@ -59,6 +59,21 @@ PHONE_IN_TEXT = re.compile(r"(?<!\d)(?:\+?84|0)[ .-]?\d{2,3}[ .-]?\d{3}[ .-]?\d{
 def redact_phones(text):
     """Ads print the landlord's number in the text ("LH/Zalo 09xx..."); the app shows that text."""
     return PHONE_IN_TEXT.sub("[SĐT ẩn]", text) if isinstance(text, str) else text
+
+
+def unify_districts(d):
+    """Mogi writes "Quận Cầu Giấy", the others "Cầu Giấy"; Facebook has "Chưa rõ" (unknown). One short name per
+    district; unknown or composite labels are taken from the coordinates (district polygons), else left empty."""
+    d = d.copy()
+    d["district"] = d.district.map(short_district)
+    miss = d.district.isna() & d.latitude.notna() & d.longitude.notna()
+    if miss.any():
+        polys = load_polys()
+        d.loc[miss, "district"] = [short_district(district_of(a, o, polys))
+                                   for a, o in zip(d.loc[miss, "latitude"], d.loc[miss, "longitude"])]
+    print(f"district: {int(miss.sum())} unknown labels looked up from coordinates, "
+          f"{int(d.district.isna().sum())} still unknown")
+    return d
 
 
 def add_dates(d):
@@ -102,6 +117,7 @@ def main():
     for c in ["title", "description"]:
         d[c] = d[c].map(redact_phones)
     d["house_type"] = d.house_type.map(canonical_house_type)   # one spelling per type across sources
+    d = unify_districts(d)
     d = add_dates(d)
     d = gate_links(drop_stale(d))
     d = mark_duplicates(d, cross_platform=True)

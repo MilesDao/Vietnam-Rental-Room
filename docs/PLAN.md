@@ -87,6 +87,20 @@ Record every result in `docs/RECSYS_FINAL_REPORT.md` §10 first, then copy it in
 | 2.6 | Link check: add Wilson 95% intervals; spot-check 25 Facebook links by hand and record the result | `python -m src.crawl.verify_sample … --n 25` + manual sheet | Table 6, Summary |
 | 2.7 | Freshness: dated share by source, and the age distribution of dated rooms | prepared data | §2.1, §7 |
 
+**Status (2026-10-07): Phase 2 measured, except the two manual checks.** All numbers are in `docs/report_numbers.json`, written by the new `python -m src.recsys.report_numbers`. The write-up is in `docs/RECSYS_FINAL_REPORT.md` §10 (backup `.bak-2026-10-07`). `.venv` → **91 passed**.
+
+| # | Result | Decision rule outcome |
+|---|---|---|
+| 2.1 | Price MAPE **25.5% [24.3, 26.8]** vs baseline 33.8% [32.0, 35.6]; gain −8.3 [−9.5, −7.1] points; MAE 1.09 M vs 1.34 M. Area stated 22.4/35.0, missing 28.8/32.5. By source in §10.4 (Rencity: no gain). | 25.5/33.8 = 0.75 > 0.6 → **"modest improvement"** |
+| 2.2 | Area MAE 15.52 vs 15.60 m², gain interval [−0.39, +0.20] | Spans zero → **area model dropped**; `area_est` = type × price-quintile median (`price_model.add_area` now uses an interval rule) |
+| 2.3 | Fair 44.5% · premium 31.1% · bargain 24.4% (was 65.4% fair) | Error 25.5% > ±15% band → Phase 3: show the price hint only when it exceeds the segment's error; say so in the report |
+| 2.4 | 2,114 duplicates: 2,108 same-platform, **6 cross-platform**; phone rule +0; 7 posters on 2+ sites | Report says "reposts removed; 6 cross-platform". **Precision 87.5% [75.3, 94.1]** of 48 decided (6/6 cross-platform; 36/42 same-platform); labelled by the AI assistant, 10 pairs verified on the live pages |
+| 2.5 | Learned 0.835 (held-out) · hand 0.851 · **nearest-first 0.823** · price+closeness 0.824 · random 0.722 · cheapest 0.602. Learned − nearest +0.012 [−0.051, +0.070]. Signed coefficients: value −0.15 [−0.47, +0.31] (the clipped 0) | Learned beats neither hand-set nor nearest-first → **"learning did not improve on a hand-set formula, or on sorting by distance, on AI labels"** |
+| 2.6 | Wilson intervals added (25/25 → [86.7, 100]); not re-run (no links changed) | **Facebook: 23/25 = 92% [75.0, 97.8]**, 2 posts unavailable; checked by the AI assistant in the user's browser (`docs/labelling/facebook_links.csv`) |
+| 2.7 | 38% of rooms dated (Facebook, Mogi, Alonhadat 0%); dated ages 6/11/21 days at the quartiles, max 89; age filter removed 0 | Report states that most rooms' age is unknown |
+
+Method note for 2.5: votes are joined to the data they were cast on (`data/unified_hanoi_rentals_dedup.csv.bak-2026-10-06`, 100% of voted rooms present), not the current data (40%). This reproduces the earlier 0.835 / 0.88 exactly. `ltr` was **not** re-run as a command, so `data/models/ltr_weights.json` is unchanged and the app's ranker is untouched.
+
 **Decision rules (decide the wording in advance so the results can't steer it):**
 - If price MAPE stays below about 0.6 × baseline, keep "substantially better than a median rule".
 - If the leak or grouping moves it close to the baseline, rewrite the claim as "modest improvement" and make it a key finding.
@@ -116,6 +130,18 @@ Record every result in `docs/RECSYS_FINAL_REPORT.md` §10 first, then copy it in
 
 ---
 
+**Status (2026-10-07): Phase 3 done in the text and tables; the figure images are still old (Phase 5).** `docs/latex/report.tex` → `report.pdf` is now 18 pages (backup of the previous source: `report_v3_before_phase3.tex.bak`; the earlier version is `report_v2.tex.bak`). Every row of the table above was applied, with these additions:
+- Executive summary: 25.5% vs 33.8% "modest improvement"; 9,281 listings; half is undated Facebook; only 6 cross-site duplicates; the ranker beats only random and cheapest-first; a short account of the 15.0% → 25.5% correction; the assistant also labelled the duplicate and Facebook samples.
+- §1.4 pseudonymous (not "irreversible") hashes, masked phones in text, Facebook provenance and terms of service. Facebook provenance (from the user, 2026-10-07): the posts were collected by a Claude Code agent; the report now says so. Still to document in Phase 4.3: whether it ran logged in, the date, and which groups.
+- §2: two new defect rows (room types, phones in text) plus Rencity repeats; Table 1 (468 and 9,281); duplicate split 2,108 same-platform / 6 cross-site; merge precision 42/48 = 87.5% (75–94%); freshness by source.
+- §3: fair-price method (stated area only, grouped folds, 44.5/31.1/24.4% tiers), Table 3 with intervals, by-source gain, area model dropped, weights table with signed coefficients, clipped-zero explanation.
+- §5: Table 5 with nearest-first and price+closeness, bootstrap sentence, Table 6 with n, Wilson intervals and a Facebook row (23/25), caveats in the captions.
+- §6–8: discussion, lessons (the leak), limitations (duplicates, scope, ward-level distance, pseudonymisation, AI labels), conclusion, a duplicate-detection recommendation, glossary.
+- **App change made for the "price hint" rule:** `src/recsys/app.py` shows "cheaper/dearer by x%" only when the gap is at least 25% (`HINT_MIN_GAP`, the measured error); smaller gaps read "within the usual range (±25%)". App smoke test: no exception.
+- **Known inconsistency (checked by viewing the images):** Figure 4 (`m4_price_model`) still shows the old bars 31.9% / 15.0% and "ML on the same rows: 20.6%", and Figure 2 (`m3b_dedup`) is titled "9,283 → 7,167 after merging cross-platform duplicates" with the old per-platform counts (Chotot −31, Rencity −10). Figures 3 (pipeline, built from the old MAPE), 7 (learned weights) and 9 (evaluation, no nearest-first bar) are probably stale too. The text and tables are correct, so **the PDF contradicts itself until Phase 5 regenerates the figures; do not circulate it before then.**
+
+---
+
 ## Phase 4: Enhancements (new content)
 
 | # | New section | Content (no code) | Length |
@@ -133,6 +159,22 @@ Record every result in `docs/RECSYS_FINAL_REPORT.md` §10 first, then copy it in
 Front matter, if you provide the details: supervisor, course code and name, and a signed declaration of originality.
 
 ---
+
+**Status (2026-10-07): Phase 4 done, except 4.6 and 4.9, which need the team.** `report.pdf` is now 23 pages (backup `report_v4_before_phase4.tex.bak`). `.venv` → **92 passed**.
+
+| # | Result |
+|---|---|
+| 4.1 | New §2 "Related work": hedonic pricing (Rosen 1974, Malpezzi 2003), gradient boosting (XGBoost, LightGBM), knowledge-based/hybrid recommenders (Burke 2002, Ricci et al. 2022), pointwise vs LambdaMART (Liu 2009, Burges 2010), position bias (Joachims et al. 2017), leakage (Kaufman et al. 2012), grouped CV (Roberts et al. 2017), Wilson 1927, existing services. **14 new references** (from memory; verify the page numbers before submission). |
+| 4.2 | New §6.3 "Where the fair-price model fails": table by room type and price band, district range, the 100 worst cases (all over-estimates) and their causes. Numbers from the new `errors` section of `report_numbers.json`. The residual-map and by-segment figures are left to Phase 5. |
+| 4.3 | New §9 "Ethical, legal and privacy considerations": Vietnam's PDPL (Law 91/2025/QH15, in force 1 Jan 2026, replaces Decree 13/2023; verified online), pseudonymisation, masking, names still in text, no retention period, robots.txt ≠ terms of service, Facebook collected by a Claude Code agent, the logged-in link check, fairness (female-only not learned; sublets demoted; hint threshold), AI use. |
+| 4.4 | "Reading the intervals" paragraph in §6.1; intervals were already on every headline number. |
+| 4.5 | Appendix B "Reproducibility": pipeline order in prose plus a settings table (snapshot, software versions, filters, duplicate rule, hyperparameters, folds, bootstrap counts, ranker rules, hint threshold, the 10 rated searches, sample seeds). |
+| 4.6 | **Not done: team contributions need the team.** |
+| 4.7 | "Statement on the use of AI assistance" after the executive summary. |
+| 4.8 | Threats expanded: 10-search bootstrap, remaining cross-site copies across folds, ward-level coordinates, the AI rater's own preference. |
+| 4.9 | Not done (user pilot needs people). |
+
+**Found and fixed during 4.2: district labels.** Mogi wrote "Quận X" and the others "X", so **the app's district filter dropped every Mogi room** and the baseline was split. `prepare.unify_districts` + `sample_schema.short_district`, with tests. All report numbers updated (MAPE 25.4% vs 34.3%; 7,166 rooms; 7 cross-site); see `RECSYS_FINAL_REPORT.md` §10.9.
 
 ## Phase 5: Figures
 
@@ -152,6 +194,8 @@ Regenerate with `python -m src.recsys.make_slide_figures` and copy into `docs/la
 Each figure needs a caption that stands alone, axis units (VND/month, m², km), and readable greyscale output.
 
 ---
+
+**Status (2026-10-07): Phase 5 done.** New `src/recsys/make_paper_figures.py` writes 8 vector PDFs to `docs/latex/figures/` (Latin Modern, colour-blind-safe, panel labels, intervals); the pipeline, ranker and metric diagrams are TikZ. Two new figures (error by segment, residual map). Captions rewritten; "one room per building" corrected in §3.5 (the app shows all rooms; the CLI can cap). `report.pdf`: 25 pages, no overfull boxes, no unresolved references. Each figure was rendered and inspected. Details in `docs/FIGURE_REVIEW.md`. **Not done:** the slide figures still carry old numbers.
 
 ## Phase 6 (optional, highest value): real feedback
 
@@ -175,6 +219,21 @@ Each figure needs a caption that stands alone, axis units (VND/month, m², km), 
 | Docs in sync | Update `SLIDES_SCRIPT.md` and `SLIDES_PLAN.md` with the new numbers |
 
 ---
+
+**Status (2026-10-07): Phase 7 done.**
+
+| Check | Result |
+|---|---|
+| Compiles cleanly | Yes (Tectonic/XeLaTeX): no errors, no overfull boxes, no unresolved references; Tables 1, 2 and 8 set ragged-right |
+| Numbers consistent | 42 of 43 headline numbers found verbatim against `report_numbers.json`; the 43rd is 1.36 vs 1.35 M (1,355,000 rounded half-up), so correct. No stale numbers (9,283, 7,167, 33.8%, 31.9% …); the two remaining "15.0%" are the deliberate history of the correction |
+| No code shown | No paths, commands or code in the body; the `force` option is no longer in typewriter type |
+| Visual check | All 24 pages rendered and inspected: title page, contents on one page, lists on one page (short captions added), figures and tables readable |
+| Claims audit | `COUNTER_REPORT.md` §7: every point Fixed or Accepted; Open: team contributions and supervisor, real-user feedback |
+| Length | **24 pages** (target 20–24) |
+| Docs in sync | `SLIDES_SCRIPT.md` and `SLIDES_PLAN.md` rewritten as v6 (backups `.bak-2026-10-07`); slides now use the report's figures via `docs/slides/make_slide_pngs.py` → `docs/slides/figures/paper/` |
+| Tests | `.venv` → **92 passed**; Streamlit AppTest: no exception |
+
+**Still needed from the team:** team contributions (4.6), supervisor and course details, checking the 14 new references' page numbers, and real-user votes (Phase 6).
 
 ## Order and effort
 

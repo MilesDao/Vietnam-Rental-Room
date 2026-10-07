@@ -52,6 +52,9 @@ def test_prepared_data_ids_and_types_are_clean():
     assert d.listing_id.is_unique                      # votes and duplicate_of join on it
     types = d.house_type.dropna()
     assert (types.map(canonical_house_type) == types).all()   # one spelling per type
+    from src.clean.sample_schema import short_district
+    dist = d.district.dropna()
+    assert (dist.map(short_district) == dist).all()           # "Cầu Giấy", never "Quận Cầu Giấy" or "Chưa rõ"
 
 
 def test_price_model_predictions_are_out_of_fold():
@@ -86,6 +89,17 @@ def test_own_price_does_not_leak_through_missing_area():
     d2.loc[0, "price_vnd"] *= 3                    # row 0 has no stated area
     b = price_model.enrich(d2, save=False)
     assert a.fair_price[0] == b.fair_price[0]      # its own price must not reach its fair price via area_est
+
+
+def test_cluster_ci_brackets_the_mean_and_signs_a_clear_gain():
+    rng = np.random.default_rng(0)
+    a = rng.uniform(0, 1, 400)
+    groups = np.repeat(np.arange(100), 4)
+    ci = price_model.cluster_ci(a, a + 0.5, groups)
+    assert ci["a"][0] < a.mean() < ci["a"][1]
+    assert ci["diff"] == [-0.5, -0.5]            # a always 0.5 lower: no uncertainty in the difference
+    noisy = price_model.cluster_ci(a, a + rng.normal(0, 1, 400), groups)
+    assert noisy["diff"][0] < 0 < noisy["diff"][1]   # no real gain: the interval spans zero
 
 
 def test_cv_groups_keep_one_poster_and_one_building_together():
@@ -143,3 +157,8 @@ def test_ml_ranker_switch(tmp_path, monkeypatch):
     a = recommend(d, 4_000_000, ["Cầu Giấy"], top=30, ranker="ml")
     b = recommend(d, 4_000_000, ["Cầu Giấy"], top=30, ranker="hand")
     assert list(a.listing_id) != list(b.listing_id)   # the two rankers really differ
+
+
+def test_wilson_interval_matches_known_values():
+    from src.recsys.report_numbers import wilson
+    assert wilson(25, 25) == [86.7, 100.0] and wilson(0, 8) == [0.0, 32.4] and wilson(24, 25) == [80.5, 99.3]
