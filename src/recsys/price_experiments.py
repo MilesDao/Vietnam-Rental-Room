@@ -177,6 +177,35 @@ def ape_of(logpred, y):
 
 
 # ---------------------------------------------------------------- experiments
+def final_model_checks(t, y, groups, folds, text, p_text, noisy):
+    """A1 and A6 repeated on the FINAL model (gradient boosting + text); the main sections use the tabular model."""
+    factory = models()["Histogram gradient boosting + text"]
+    ape = ape_of(p_text, y)
+    clean = ~noisy
+    on_clean = oof_predict(*factory, t, y, folds, text, rows=clean)
+    out = {"noise": {"mape_on_flagged_rows": round(float(ape[noisy].mean()), 1),
+                     "mape_on_clean_rows": round(float(ape[clean].mean()), 1),
+                     "train_clean_test_clean": metrics(on_clean, y, groups, ape, mask=clean)[0]}}
+    loso = {}
+    key = (t.house_type.fillna("") + "|" + t.district.fillna("")).values
+    for src in t.platform.value_counts().index:
+        te = (t.platform == src).values
+        if te.sum() < 50:
+            continue
+        tt = t.assign(platform="?")  # the source feature cannot help on a source never seen
+        X = pm._X(tt, CATS + NUMERIC)
+        m = factory[0]().fit(X[~te], y[~te], text[~te])
+        p = np.clip(m.predict(X[te], text[te]), y[~te].min(), y[~te].max())
+        med = pd.Series(y[~te]).groupby(key[~te]).median()
+        b = pd.Series(key[te]).map(med).fillna(np.median(y[~te])).values
+        ci = pm.cluster_ci(ape_of(p, y[te]), ape_of(b, y[te]), groups[te])
+        loso[src] = {"n": int(te.sum()), "mape_model": round(float(ape_of(p, y[te]).mean()), 1),
+                     "mape_baseline": round(float(ape_of(b, y[te]).mean()), 1), "mape_in_cv": round(float(ape[te].mean()), 1),
+                     "ci95_diff_vs_baseline": [round(v, 1) for v in ci["diff"]]}
+    out["leave_one_source_out"] = loso
+    return out
+
+
 def run():
     started = time.time()
     d = pd.read_csv(DATA, low_memory=False, dtype={"contact_phone": str, "listing_id": str})
@@ -392,6 +421,7 @@ def run():
                       "test_chosen": test_scores[chosen], "test_baseline": metrics(base_t, yt, gt)[0],
                       "test_all_candidates_mape": {k: v["mape"] for k, v in test_scores.items()}}
     print("  holdout: chosen", chosen, "test MAPE", test_scores[chosen]["mape"], test_scores[chosen]["ci95_mape"])
+    res["final_model_checks"] = final_model_checks(t, y, groups, folds, text, preds["Histogram gradient boosting + text"], noisy)
     res["seconds"] = round(time.time() - started)
 
     OOF.parent.mkdir(parents=True, exist_ok=True)

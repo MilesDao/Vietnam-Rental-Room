@@ -518,7 +518,8 @@ def fig_explain(nums, d):
 
 def fig_generalise(nums):
     pe = nums["price_experiments"]
-    lo = pe["leave_one_source_out"]
+    lo = pe["final_model_checks"]["leave_one_source_out"]  # final model (with text)
+    tab = pe["leave_one_source_out"]  # same test without the text
     srcs = sorted(lo, key=lambda s: lo[s]["n"], reverse=True)
     fig, ax = plt.subplots(1, 2, figsize=(TEXT_W_IN, 2.15), gridspec_kw={"width_ratios": [1.6, 1], "wspace": 0.35})
     x = np.arange(len(srcs))
@@ -526,6 +527,8 @@ def fig_generalise(nums):
                                (0, "mape_model", C["blue"], "Source left out of training"),
                                (0.27, "mape_baseline", C["light"], "Median baseline, source left out")]:
         ax[0].bar(x + off, [lo[s][key] for s in srcs], width=0.26, color=col, label=lab, edgecolor=C["ink"], linewidth=0.3)
+    ax[0].scatter(x, [tab[s]["mape_model"] for s in srcs], marker="x", s=14, color=C["ink"], linewidths=0.8, zorder=3,
+                  label="Source left out, model without text")
     ax[0].set_xticks(x, [f"{NAMES[s]} ({lo[s]['n']:,})" for s in srcs], fontsize=6.2, rotation=30, ha="right",
                      rotation_mode="anchor")
     ax[0].set_ylabel("MAPE (%)")
