@@ -86,6 +86,23 @@ def tree_prep(impute=False):
                               ("num", num, NUMERIC)])
 
 
+class TextForest:
+    """Random forest on the ordinal-encoded tabular features plus 64 SVD components of the digit-free text (fit in-fold),
+    so that the text gain is tested for a second tree ensemble, not only for gradient boosting."""
+
+    def fit(self, X, y, text):
+        self.prep = tree_prep().fit(X)
+        self.vec = TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 5), min_df=3, max_features=50_000, sublinear_tf=True)
+        self.svd = TruncatedSVD(64, random_state=SEED)
+        Z = self.svd.fit_transform(self.vec.fit_transform(text))
+        self.m = RandomForestRegressor(300, min_samples_leaf=3, max_features=0.5, n_jobs=-1, random_state=SEED).fit(
+            np.hstack([self.prep.transform(X), Z]), y)
+        return self
+
+    def predict(self, X, text):
+        return self.m.predict(np.hstack([self.prep.transform(X), self.svd.transform(self.vec.transform(text))]))
+
+
 class TextRidge:
     """Ridge on one-hot/scaled tabular features plus a word+character TF-IDF of the text (fit in-fold)."""
 
@@ -112,6 +129,7 @@ def models():
             n_estimators=400, learning_rate=0.05, max_depth=3, subsample=0.8, random_state=SEED)), False, "tab"),
         "Histogram gradient boosting": (pm._model, False, "hgb"),
         "Ridge + text": (TextRidge, True, "tab"),
+        "Random forest + text": (TextForest, True, "tab"),
         "Histogram gradient boosting + text": (pm.TextBoost, True, "hgb"),
     }
 
@@ -304,6 +322,76 @@ def run():
         "above_interval": round(float((y > q[0.9]).mean() * 100), 1),
         "median_model_mape": metrics(q[0.5], y, groups, base_ape)[0]["mape"],
     }
+    # B3: how much of the distance to the centre the district already explains (why removing distances costs nothing)
+    dist = pd.to_numeric(t.distance_to_center_km, errors="coerce")
+    ok = dist.notna() & t.district.notna()
+    gm = dist[ok].groupby(t.district[ok]).transform("mean")
+    res["district_explains_distance_r2"] = round(float(1 - ((dist[ok] - gm) ** 2).sum() / ((dist[ok] - dist[ok].mean()) ** 2).sum()), 3)
+
+    # B4: which words explain what the tabular model misses (descriptive): ridge on word n-grams of the digit-free
+    # original text, predicting the out-of-fold residual of the tabular gradient-boosting model
+    words = (t.title.fillna("") + " . " + t.description.fillna("").str[:600]).str.lower().str.replace(r"\d", " ", regex=True)
+    wv = TfidfVectorizer(analyzer="word", ngram_range=(1, 2), min_df=30, token_pattern=r"(?u)\b[^\W\d_]{2,}\b", sublinear_tf=True)
+    W = wv.fit_transform(words)
+    resid = y - preds["Histogram gradient boosting"]
+    rr = RidgeCV(alphas=np.logspace(-1, 3, 13)).fit(W, resid)
+    order = np.argsort(rr.coef_)
+    terms = np.array(wv.get_feature_names_out())
+    res["words"] = {"vocabulary": int(W.shape[1]), "min_rooms_per_term": 30,
+                    "raise_rent": [[terms[i], round(float(rr.coef_[i]), 3)] for i in order[::-1][:12]],
+                    "lower_rent": [[terms[i], round(float(rr.coef_[i]), 3)] for i in order[:12]]}
+
+    # B4 robustness: words like "triệu", "tr", "k" survive the digit removal and hint at the price's magnitude. Removing
+    # them too shows whether the text gain depends on them.
+    units = r"\b(trieu|tr|k|nghin|ngan|dong|d|vnd|tram|m)\b"
+    p_units = oof_predict(*models()["Histogram gradient boosting + text"], t, y, folds,
+                          text.map(lambda s: re.sub(units, " ", s.lower())))
+    ref = ape_of(preds["Histogram gradient boosting + text"], y)
+    res["text_without_price_units"] = metrics(p_units, y, groups, ref)[0]
+
+    # B5: partial dependence of area on rooms that STATE an area (no extrapolation to the 48% without one) + its spread
+    stated_rows = t.area_m2.notna().values
+    grid = np.arange(10, 81, 5)
+    r = partial_dependence(full, X[stated_rows], ["area_m2"], custom_values={"area_m2": grid}, kind="average", method="brute")
+    res["partial_dependence"]["area_m2_stated_only"] = {"grid": [float(v) for v in grid],
+                                                        "rent_m_vnd": [round(float(np.exp(v)) / 1e6, 3) for v in r["average"][0]]}
+    res["area_distribution"] = {"quantiles": {str(q): float(v) for q, v in
+                                              t.area_m2.dropna().quantile([.05, .25, .5, .75, .95]).items()},
+                                "share_over_60": round(float((t.area_m2.dropna() > 60).mean()), 3)}
+
+    # B1: held-out test. 20% of the groups are locked away; the model is CHOSEN by grouped CV on the other 80% and
+    # scored on the test rooms once. All candidates are also scored on the test set, for information only.
+    from sklearn.model_selection import GroupShuffleSplit
+    dev, test = next(GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=SEED).split(np.zeros(len(t)), groups=groups))
+    td, tt_ = t.iloc[dev].reset_index(drop=True), t.iloc[test].reset_index(drop=True)
+    yd, yt = y[dev], y[test]
+    gd, gt = groups[dev], groups[test]
+    fd = list(pm._splits(len(td), gd))
+    cand = {k: models()[k] for k in ("Ridge regression", "Random forest", "Histogram gradient boosting",
+                                     "Random forest + text", "Histogram gradient boosting + text")}
+    dev_cv = {k: round(float(ape_of(oof_predict(*v, td, yd, fd, text_of(td)), yd).mean()), 2) for k, v in cand.items()}
+    chosen = min(dev_cv, key=dev_cv.get)
+    kd = (td.house_type.fillna("") + "|" + td.district.fillna("")).values
+    kt = (tt_.house_type.fillna("") + "|" + tt_.district.fillna("")).values
+    med = pd.Series(yd).groupby(kd).median()
+    base_t = pd.Series(kt).map(med).fillna(np.median(yd)).values
+    test_scores = {}
+    for k, (factory, uses_text, kind) in cand.items():
+        Xd = pm._X(td, CATS + NUMERIC) if kind == "hgb" else tab_frame(td)
+        Xt_ = pm._X(tt_, CATS + NUMERIC) if kind == "hgb" else tab_frame(tt_)
+        m = factory()
+        if uses_text:
+            m.fit(Xd, yd, text_of(td))
+            p = m.predict(Xt_, text_of(tt_))
+        else:
+            m.fit(Xd, yd)
+            p = m.predict(Xt_)
+        test_scores[k] = metrics(np.clip(p, yd.min(), yd.max()), yt, gt, ape_of(base_t, yt))[0]
+    res["holdout"] = {"dev_rooms": int(len(dev)), "test_rooms": int(len(test)), "split": "GroupShuffleSplit 80/20 by group, seed 0",
+                      "dev_cv_mape": dev_cv, "chosen_on_dev": chosen,
+                      "test_chosen": test_scores[chosen], "test_baseline": metrics(base_t, yt, gt)[0],
+                      "test_all_candidates_mape": {k: v["mape"] for k, v in test_scores.items()}}
+    print("  holdout: chosen", chosen, "test MAPE", test_scores[chosen]["mape"], test_scores[chosen]["ci95_mape"])
     res["seconds"] = round(time.time() - started)
 
     OOF.parent.mkdir(parents=True, exist_ok=True)

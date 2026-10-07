@@ -14,8 +14,9 @@ other rows are predicted by a model fit on all training rows.
 - Fair-price model: gradient-boosted trees on the tabular features (stated area, missing when unknown) plus 64 SVD
   components of a character TF-IDF of title + description with EVERY DIGIT REMOVED (52% of titles state the rent).
   It won the comparison in price_experiments.py (MAPE 22.6% vs 25.4% without text). Outputs fair_price,
-  value_pct = (price / fair_price - 1) * 100 (negative = cheaper than similar rooms), fair_lo / fair_hi = the 5th and
-  95th percentile of a quantile model (out-of-fold coverage ~81%), and market_value_tier: below / inside / above that band.
+  value_pct = (price / fair_price - 1) * 100 (negative = cheaper than similar rooms), fair_lo / fair_hi = a "usual
+  price" band centred on fair_price (width from a 10/50/90% quantile model, calibrated by cross-conformal prediction
+  to contain 80% of asking rents), and market_value_tier: below / inside / above that band.
 """
 import argparse
 import json
@@ -35,7 +36,9 @@ MODELS = ROOT / "data/models"
 CATS = ["house_type", "district", "platform"]
 DIST = ["distance_to_center_km", "distance_to_nearest_metro_km", "distance_to_nearest_university_km"]
 TIERS = ["Giá hời (dưới khoảng thường thấy)", "Giá hợp lý (trong khoảng thường thấy)", "Giá cao (trên khoảng thường thấy)"]
-BAND = (0.05, 0.95)   # quantiles of the "usual price" band; out-of-fold coverage ~81% (price_experiments.py)
+BAND = (0.1, 0.9)     # quantiles that set the WIDTH of the "usual price" band around the fair price (nominal 80%)
+QUANTILES = (BAND[0], 0.5, BAND[1])
+COVERAGE = 0.8        # the band is calibrated (cross-conformal) to contain this share of asking rents
 REPORT = {}   # filled by enrich(); printed by --report and quoted in the final report
 
 
@@ -76,6 +79,30 @@ class TextBoost:
 def _quantile_model(a):
     return HistGradientBoostingRegressor(loss="quantile", quantile=a, categorical_features="from_dtype", max_iter=400,
                                          learning_rate=0.05, l2_regularization=1.0, random_state=0)
+
+
+def band_around(center, q_lo, q_mid, q_hi):
+    """Log-scale band around `center`: the offsets of the low/high quantile from the median quantile, clipped so the
+    centre always lies inside (quantile models can cross)."""
+    return center + np.minimum(q_lo - q_mid, 0), center + np.maximum(q_hi - q_mid, 0)
+
+
+def conformal_q(scores, coverage=COVERAGE):
+    """Conformal margin: the finite-sample quantile of the conformity scores max(lo - y, y - hi)."""
+    n = len(scores)
+    return float(np.quantile(scores, min(1.0, np.ceil((n + 1) * coverage) / n)))
+
+
+def conformal_band(lo, hi, y, center, folds, coverage=COVERAGE):
+    """Cross-conformal calibration (conformalised quantile regression): each fold's band is widened (or narrowed) by
+    the margin computed on the OTHER folds' out-of-fold scores, so no room calibrates its own band."""
+    scores = np.maximum(lo - y, y - hi)
+    new_lo, new_hi, qs = lo.copy(), hi.copy(), []
+    for tr, te in folds:
+        q = conformal_q(scores[tr], coverage)
+        new_lo[te], new_hi[te] = np.minimum(lo[te] - q, center[te]), np.maximum(hi[te] + q, center[te])
+        qs.append(q)
+    return new_lo, new_hi, qs
 
 
 def _X(d, cols):
@@ -185,25 +212,35 @@ def add_fair_price(d, save=True):
     groups = cv_groups(d[train])
     Xt, tt = X[train].reset_index(drop=True), text[train.values].reset_index(drop=True)
     pred = pd.Series(np.nan, index=d.index)
-    band = {a: pd.Series(np.nan, index=d.index) for a in BAND}
-    oof, oof_band = np.empty(len(y)), {a: np.empty(len(y)) for a in BAND}
-    for tr, te in _splits(len(y), groups):
+    band = {a: pd.Series(np.nan, index=d.index) for a in QUANTILES}
+    oof, oof_band = np.empty(len(y)), {a: np.empty(len(y)) for a in QUANTILES}
+    folds = list(_splits(len(y), groups))
+    for tr, te in folds:
         oof[te] = TextBoost().fit(Xt.iloc[tr], y[tr], tt.iloc[tr]).predict(Xt.iloc[te], tt.iloc[te])
-        for a in BAND:
+        for a in QUANTILES:
             oof_band[a][te] = _quantile_model(a).fit(Xt.iloc[tr], y[tr]).predict(Xt.iloc[te])
     pred[train] = oof
-    for a in BAND:
+    for a in QUANTILES:
         band[a][train] = oof_band[a]
     full = TextBoost().fit(Xt, y, tt)
-    full_band = {a: _quantile_model(a).fit(Xt, y) for a in BAND}
+    full_band = {a: _quantile_model(a).fit(Xt, y) for a in QUANTILES}
     if (~train).any():
         Xo, to = X[~train].reset_index(drop=True), text[(~train).values].reset_index(drop=True)
         pred[~train] = full.predict(Xo, to)
-        for a in BAND:
+        for a in QUANTILES:
             band[a][~train] = full_band[a].predict(Xo)
+    # The band is centred on the fair price; the quantile models only give its room-specific width. Otherwise the
+    # band (tabular model) and the fair price (text model) disagree and a hint could read "cheaper by -5%".
+    # Then it is calibrated by cross-conformal prediction so that it really contains COVERAGE of asking rents.
+    raw_lo, raw_hi = band_around(oof, oof_band[BAND[0]], oof_band[0.5], oof_band[BAND[1]])
+    oof_lo, oof_hi, q_fold = conformal_band(raw_lo, raw_hi, y, oof, folds)
+    lo, hi = band_around(pred, band[BAND[0]], band[0.5], band[BAND[1]])
+    q_all = conformal_q(np.maximum(raw_lo - y, y - raw_hi))
+    lo, hi = np.minimum(lo - q_all, pred), np.maximum(hi + q_all, pred)
+    lo[train], hi[train] = oof_lo, oof_hi          # training rooms keep their out-of-fold band
     d["fair_price"] = np.exp(pred).round(-3)
-    d["fair_lo"] = np.exp(band[BAND[0]]).round(-3)
-    d["fair_hi"] = np.exp(band[BAND[1]]).round(-3)
+    d["fair_lo"] = np.exp(lo).round(-3)
+    d["fair_hi"] = np.exp(hi).round(-3)
     d["value_pct"] = ((d.price_vnd / d.fair_price - 1) * 100).round(1)
     tier = np.where(d.price_vnd < d.fair_lo, TIERS[0], np.where(d.price_vnd > d.fair_hi, TIERS[2], TIERS[1]))
     d["market_value_tier"] = pd.Series(tier, index=d.index).where(d.fair_price.notna(), None)
@@ -219,10 +256,15 @@ def add_fair_price(d, save=True):
            "mae_group_median_vnd": round(float(np.mean(np.abs(base - price))), -3)}
     ci = cluster_ci(ape_ml * 100, ape_base * 100, groups)
     rep.update(ci95_mape_ml=ci["a"], ci95_mape_group_median=ci["b"], ci95_mape_diff=ci["diff"])
-    inside = (y >= oof_band[BAND[0]]) & (y <= oof_band[BAND[1]])
+    inside = (y >= oof_lo) & (y <= oof_hi)
     rep.update(model="gradient boosting + digit-free text (TF-IDF, 64 SVD components)",
-               band_quantiles=list(BAND), band_coverage_oof=round(float(inside.mean() * 100), 1),
-               band_median_width_ratio=round(float(np.median(np.exp(oof_band[BAND[1]] - oof_band[BAND[0]]))), 2))
+               band_quantiles=list(BAND), band_target_coverage=COVERAGE * 100,
+               band_rule="fair price x exp(q - q50) of a tabular quantile model, widened by a cross-conformal margin",
+               band_coverage_uncalibrated=round(float(((y >= raw_lo) & (y <= raw_hi)).mean() * 100), 1),
+               band_conformal_factor=[round(float(np.exp(q)), 3) for q in q_fold],
+               band_coverage_oof=round(float(inside.mean() * 100), 1),
+               band_below_oof=round(float((y < oof_lo).mean() * 100), 1), band_above_oof=round(float((y > oof_hi).mean() * 100), 1),
+               band_median_width_ratio=round(float(np.median(np.exp(oof_hi - oof_lo))), 2))
     stated = d.loc[train, "area_m2"].notna().values
     for name, m in (("area_stated", stated), ("area_missing", ~stated)):
         rep[name] = {"n": int(m.sum()), "mape_ml": round(float(ape_ml[m].mean()) * 100, 1),

@@ -24,7 +24,7 @@ import numpy as np
 import pandas as pd
 
 from src.clean.link_check import mark_bad_links, parse_images
-from src.clean.sample_schema import canonical_house_type, mark_duplicates, short_district
+from src.clean.sample_schema import canonical_house_type, coordinate_issues, mark_duplicates, short_district
 from src.crawl.pii import hash_value
 from src.recsys import price_model
 from src.recsys.regeocode_fallback import district_of, load_polys, repair
@@ -59,6 +59,17 @@ PHONE_IN_TEXT = re.compile(r"(?<!\d)(?:\+?84|0)[ .-]?\d{2,3}[ .-]?\d{3}[ .-]?\d{
 def redact_phones(text):
     """Ads print the landlord's number in the text ("LH/Zalo 09xx..."); the app shows that text."""
     return PHONE_IN_TEXT.sub("[SĐT ẩn]", text) if isinstance(text, str) else text
+
+
+def drop_fake_coords(d):
+    """Placeholder coordinates outside Hanoi (mogi's 10.772,106.698 = central Ho Chi Minh City; 14.058,108.277 = centre of
+    Vietnam) are not locations: blank them and everything computed from them (distances, nearest station, tiers)."""
+    d = d.copy()
+    bad = coordinate_issues(d.latitude, d.longitude) == "outside_hanoi"
+    derived = ["latitude", "longitude"] + [c for c in d if c.startswith(("distance_to_", "nearest_")) or c.endswith("proximity_tier")]
+    d.loc[bad, derived] = np.nan
+    print(f"coordinates: {int(bad.sum())} placeholder points outside Hanoi blanked")
+    return d
 
 
 def unify_districts(d):
@@ -117,7 +128,7 @@ def main():
     for c in ["title", "description"]:
         d[c] = d[c].map(redact_phones)
     d["house_type"] = d.house_type.map(canonical_house_type)   # one spelling per type across sources
-    d = unify_districts(d)
+    d = unify_districts(drop_fake_coords(d))
     d = add_dates(d)
     d = gate_links(drop_stale(d))
     d = mark_duplicates(d, cross_platform=True)

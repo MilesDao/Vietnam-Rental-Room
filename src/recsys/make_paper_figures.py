@@ -88,6 +88,65 @@ def price_errors(d):
 
 
 # ---------------------------------------------------------------- figures
+def fig_eda(t, nums):
+    """Exploratory view of the modelling data (6,866 training rooms): the target and its main relationships."""
+    rent = t.price_vnd / 1e6
+    fig, ax = plt.subplots(2, 2, figsize=(TEXT_W_IN, 4.6), gridspec_kw={"hspace": 0.62, "wspace": 0.42})
+    a = ax[0, 0]                                     # (a) distribution of the target, on a log axis
+    bins = np.geomspace(0.5, 50, 45)
+    a.hist(rent, bins=bins, color=C["blue"], alpha=0.85)
+    a.axvline(rent.median(), color=C["verm"], lw=1, ls="--")
+    a.text(rent.median() * 1.08, a.get_ylim()[1] * 0.9, f"median {rent.median():.1f} M", fontsize=6.5, color=C["verm"])
+    a.set_xscale("log")
+    a.set_xticks([0.5, 1, 2, 5, 10, 20, 50], ["0.5", "1", "2", "5", "10", "20", "50"])
+    a.xaxis.set_minor_formatter(NullFormatter())
+    a.set_xlabel("Asking rent (million VND per month, log scale)")
+    a.set_ylabel("Rooms")
+    sk = nums["eda"]["rent_m_vnd"]
+    a.set_title(f"(a) Rent distribution (skewness {sk['skew']:.1f}; of log {sk['skew_log']:.1f})")
+    a.grid(axis="y")
+    a = ax[0, 1]                                     # (b) rent by room type
+    order = [k for k in TYPES if (t.house_type == k).sum() >= 20]
+    data = [rent[t.house_type == k] for k in order]
+    a.boxplot(data, vert=False, widths=0.55, showfliers=False, patch_artist=True,
+              boxprops={"facecolor": C["sky"], "linewidth": 0.6}, medianprops={"color": C["ink"], "linewidth": 1},
+              whiskerprops={"linewidth": 0.6}, capprops={"linewidth": 0.6})
+    a.set_yticks(range(1, len(order) + 1), [f"{TYPES[k]} ({(t.house_type == k).sum():,})" for k in order])
+    a.set_xlabel("Asking rent (million VND per month)")
+    a.set_title("(b) Rent by room type (whiskers: 1.5 IQR)")
+    a.grid(axis="x")
+    a.tick_params(axis="y", length=0)
+    a = ax[1, 0]                                     # (c) rent against stated area
+    m = t.area_m2.notna()
+    a.scatter(t.area_m2[m], rent[m], s=1.5, color=C["blue"], alpha=0.25, lw=0, rasterized=True)
+    a.set_xscale("log")
+    a.set_yscale("log")
+    a.set_xlim(8, 200)
+    a.set_ylim(0.4, 60)
+    a.set_xticks([10, 20, 50, 100, 200], ["10", "20", "50", "100", "200"])
+    a.set_yticks([0.5, 1, 2, 5, 10, 20, 50], ["0.5", "1", "2", "5", "10", "20", "50"])
+    for axis in (a.xaxis, a.yaxis):
+        axis.set_minor_formatter(NullFormatter())
+    a.set_xlabel("Stated area (m², log scale)")
+    a.set_ylabel("Rent (M VND, log)")
+    a.set_title(f"(c) Rent against area (r = {nums['eda']['corr_log_rent_log_area']:.2f}, n = {int(m.sum()):,})")
+    a.grid()
+    a = ax[1, 1]                                     # (d) median rent by district
+    dd = nums["eda"]["median_rent_by_district_min100"]
+    names = list(dd)
+    ys = np.arange(len(names))
+    q = [t.loc[t.district == k, "price_vnd"].quantile([.25, .75]).values / 1e6 for k in names]
+    for y_, k, (lo_, hi_) in zip(ys, names, q):
+        a.plot([lo_, hi_], [y_, y_], color=C["sky"], lw=2.2, solid_capstyle="butt")
+        a.plot(dd[k]["median_m"], y_, "o", color=C["blue"], ms=3.2)
+    a.set_yticks(ys, [f"{k} ({dd[k]['n']:,})" for k in names], fontsize=6.5)
+    a.set_xlabel("Asking rent (M VND): median and interquartile range")
+    a.set_title("(d) Rent by district (at least 100 rooms)")
+    a.grid(axis="x")
+    a.tick_params(axis="y", length=0)
+    save(fig, "fig_eda.pdf")
+
+
 def fig_sources(d):
     distinct = d[d.duplicate_of.isna()]
     rows = d.platform.value_counts()
@@ -169,11 +228,14 @@ def fig_price(d, err):
     fair, ask = t.fair_price.values / 1e6, t.price_vnd.values / 1e6
     lim = (0.4, 60)
     xs = np.geomspace(*lim, 50)
-    ax[1].fill_between(xs, xs * 0.85, xs * 1.15, color=C["green"], alpha=0.18, lw=0, label="±15% (“fair”)")
-    ax[1].plot(xs, xs * 0.75, color=C["grey"], lw=0.6, ls="--", label="±25% (typical model error)")
-    ax[1].plot(xs, xs * 1.25, color=C["grey"], lw=0.6, ls="--")
     ax[1].plot(xs, xs, color=C["ink"], lw=0.7)
-    ax[1].scatter(fair, ask, s=1.6, color=C["blue"], alpha=0.28, lw=0, rasterized=True)
+    below = (t.price_vnd < t.fair_lo).values
+    above = (t.price_vnd > t.fair_hi).values
+    inside = ~below & ~above
+    for m, col, lab in [(inside, C["light"], "inside its usual-price band"), (below, C["blue"], "below the band"),
+                        (above, C["verm"], "above the band")]:
+        ax[1].scatter(fair[m], ask[m], s=1.6, color=col, alpha=0.45, lw=0, rasterized=True,
+                      label=f"{lab} ({m.mean() * 100:.0f}%)")
     ax[1].set_xscale("log")
     ax[1].set_yscale("log")
     ax[1].set_xlim(lim)
@@ -186,7 +248,7 @@ def fig_price(d, err):
     ax[1].set_xlabel("Estimated fair rent (million VND per month)")
     ax[1].set_ylabel("Asking rent (million VND per month)")
     ax[1].text(0.03, 0.95, f"n = {len(t):,}", transform=ax[1].transAxes, ha="left", va="top", fontsize=7)
-    ax[1].legend(loc="lower right", fontsize=7)
+    ax[1].legend(loc="lower right", fontsize=6.5, markerscale=4)
     ax[1].set_title("(b) Asking against estimated fair rent")
     ax[1].set_aspect("equal")
     save(fig, "fig_price.pdf")
@@ -418,7 +480,7 @@ def fig_models(nums):
     save(fig, "fig_models.pdf")
 
 
-def fig_explain(nums):
+def fig_explain(nums, d):
     pe = nums["price_experiments"]
     imp, abl, pdp = pe["permutation_importance"], pe["ablation"], pe["partial_dependence"]
     groups = sorted(imp, key=lambda g: imp[g]["mean_increase_mape"])
@@ -434,9 +496,19 @@ def fig_explain(nums):
     ax[0].legend(loc="upper center", bbox_to_anchor=(0.45, -0.3), ncol=2, fontsize=6.3)
     ax[0].grid(axis="x")
     ax[0].tick_params(axis="y", length=0)
-    for a, col, label, title in [(ax[1], "area_m2", "Stated area (m²)", "(b) Effect of area"),
-                                 (ax[2], "distance_to_center_km", "Distance to the centre (km)", "(c) Effect of distance")]:
-        a.plot(pdp[col]["grid"], pdp[col]["rent_m_vnd"], color=C["blue"], lw=1.2)
+    area_key = "area_m2_stated_only" if "area_m2_stated_only" in pdp else "area_m2"
+    for a, col, data, label, title in [
+            (ax[1], area_key, pd.to_numeric(d.area_m2, errors="coerce"), "Stated area (m²)", "(b) Effect of area"),
+            (ax[2], "distance_to_center_km", pd.to_numeric(d.distance_to_center_km, errors="coerce"),
+             "Distance to the centre (km)", "(c) Effect of distance")]:
+        g = pdp[col]["grid"]
+        a.plot(g, pdp[col]["rent_m_vnd"], color=C["blue"], lw=1.2, zorder=3)
+        h = a.twinx()                               # where the data are: the curve is reliable only there
+        h.hist(data[(data >= min(g)) & (data <= max(g))], bins=30, color=C["light"], alpha=0.6, zorder=1)
+        h.set_yticks([])
+        h.spines[["top", "right"]].set_visible(False)
+        a.set_zorder(h.get_zorder() + 1)
+        a.patch.set_visible(False)
         a.set_xlabel(label)
         a.set_ylabel("Predicted rent (M VND)")
         a.set_title(title)
@@ -529,6 +601,7 @@ def main():
     d = pd.read_csv(DATA, low_memory=False, dtype={"contact_phone": str, "listing_id": str})
     nums = json.loads(NUMS.read_text(encoding="utf-8"))
     err = price_errors(d)
+    fig_eda(err[0], nums)
     fig_sources(d)
     fig_dedup(d)
     fig_price(d, err)
@@ -539,7 +612,7 @@ def main():
     fig_eval(nums)
     if "price_experiments" in nums:
         fig_models(nums)
-        fig_explain(nums)
+        fig_explain(nums, err[0])
         fig_generalise(nums)
     if "simulation" in nums:
         fig_simulation(nums)

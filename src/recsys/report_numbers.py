@@ -113,6 +113,48 @@ def tier_section(d):
             "abs_value_pct_le_15": round(float((m.value_pct.abs() <= 15).mean()), 3)}
 
 
+def eda_section(d):
+    """Exploratory statistics of the modelling data (the 6,866 training rooms): target, relationships, missingness."""
+    from scipy.stats import skew, spearmanr
+
+    from src.recsys.recommend import AMENITIES
+    t = d[price_model._train_rows(d)].copy()
+    rent = t.price_vnd / 1e6
+    dist = {c: pd.to_numeric(t[c], errors="coerce") for c in
+            ("distance_to_center_km", "distance_to_nearest_metro_km", "distance_to_nearest_university_km")}
+    stated = t.area_m2.notna()
+    by_type = t.groupby("house_type").price_vnd.agg(["size", "median"])
+    by_dist = t.groupby("district").price_vnd.agg(["size", "median"])
+    by_dist = by_dist[by_dist["size"] >= 100].sort_values("median")
+
+    def sp(x):
+        m = x.notna()
+        r, pval = spearmanr(rent[m], x[m])
+        return {"rho": round(float(r), 3), "n": int(m.sum())}
+
+    feats = ["house_type", "district", "platform", "area_m2", *dist, *AMENITIES, "title", "description"]
+    miss = {c: round(float((t[c].isna() | (t[c].astype(str).str.strip() == "")).mean() * 100), 1) for c in feats}
+    return {
+        "n": int(len(t)),
+        "rent_m_vnd": {"mean": round(float(rent.mean()), 2), "median": round(float(rent.median()), 2),
+                       "q25": round(float(rent.quantile(.25)), 2), "q75": round(float(rent.quantile(.75)), 2),
+                       "p95": round(float(rent.quantile(.95)), 2), "min": round(float(rent.min()), 2), "max": round(float(rent.max()), 2),
+                       "skew": round(float(skew(rent)), 2), "skew_log": round(float(skew(np.log(rent))), 2)},
+        "median_rent_by_type": {k: {"n": int(r["size"]), "median_m": round(float(r["median"]) / 1e6, 2)} for k, r in by_type.iterrows()},
+        "median_rent_by_district_min100": {k: {"n": int(r["size"]), "median_m": round(float(r["median"]) / 1e6, 2)}
+                                           for k, r in by_dist.iterrows()},
+        "corr_log_rent_log_area": round(float(np.corrcoef(np.log(rent[stated]), np.log(t.area_m2[stated]))[0, 1]), 3),
+        "area_m2_stated": {"n": int(stated.sum()), "median": float(t.area_m2[stated].median()),
+                           "q25": float(t.area_m2[stated].quantile(.25)), "q75": float(t.area_m2[stated].quantile(.75))},
+        "spearman_rent": {"distance_to_center": sp(dist["distance_to_center_km"]),
+                          "distance_to_metro": sp(dist["distance_to_nearest_metro_km"]),
+                          "distance_to_university": sp(dist["distance_to_nearest_university_km"]),
+                          "amenity_count": sp(t[AMENITIES].sum(axis=1).astype(float))},
+        "amenity_share": {a: round(float(t[a].astype(float).mean() * 100), 1) for a in AMENITIES},
+        "missing_pct": miss,
+    }
+
+
 def error_section(d):
     """Where the fair-price model is wrong. The prepared file's fair_price is out-of-fold for training rooms."""
     t = d[d.duplicate_of.isna() & ~d.is_shared & d.price_vnd.notna() & d.fair_price.notna()].copy()
@@ -204,7 +246,7 @@ def main():
     d = pd.read_csv(OUT, low_memory=False, dtype={"contact_phone": str, "listing_id": str})
     raw = pd.read_csv(ROOT / "data/unified_hanoi_rentals_fresh.csv", low_memory=False, usecols=["listing_id"])
     nums = {"data": data_section(raw, d), "freshness": freshness_section(d), "duplicates": duplicate_section(d),
-            "value_tiers": tier_section(d), "errors": error_section(d)}
+            "value_tiers": tier_section(d), "errors": error_section(d), "eda": eda_section(d)}
     base = d.drop(columns=["fair_price", "value_pct", "market_value_tier", "area_est", "area_imputed", "is_shared"],
                   errors="ignore")
     price_model.enrich(base, save=False)

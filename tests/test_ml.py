@@ -175,3 +175,28 @@ def test_per_search_handles_several_searches_per_session():
                              **{k: 1.0 for k in ltr.QUALITY}})
     per = ltr.per_search(pd.DataFrame(rows))
     assert per.search.is_unique and len(per) == 6 and per.random.notna().all()
+
+
+def test_usual_price_band_always_contains_the_fair_price():
+    lo, hi = price_model.band_around(np.array([1.0, 1.0]), np.array([0.8, 1.2]), np.array([1.0, 1.0]), np.array([1.3, 0.9]))
+    assert (lo <= 1.0).all() and (hi >= 1.0).all()            # crossing quantiles are clipped
+    d = pd.read_csv("data/unified_hanoi_rentals_dedup.csv", low_memory=False)
+    x = d[d.fair_price.notna()]
+    assert ((x.fair_lo <= x.fair_price) & (x.fair_price <= x.fair_hi)).all()
+    assert not ((x.price_vnd < x.fair_lo) & (x.value_pct > 0)).any()   # never "cheaper by -x%"
+    assert not ((x.price_vnd > x.fair_hi) & (x.value_pct < 0)).any()
+    from src.clean.sample_schema import coordinate_issues
+    assert not (coordinate_issues(d.latitude, d.longitude) == "outside_hanoi").any()   # no placeholder points
+
+
+def test_conformal_band_reaches_its_target_coverage():
+    rng = np.random.default_rng(0)
+    n = 2000
+    y = rng.normal(0, 1, n)
+    center = np.zeros(n)
+    lo, hi = center - 0.3, center + 0.3            # far too narrow: covers ~24%
+    folds = list(price_model._splits(n, None))
+    new_lo, new_hi, qs = price_model.conformal_band(lo, hi, y, center, folds, coverage=0.8)
+    cover = ((y >= new_lo) & (y <= new_hi)).mean()
+    assert 0.77 <= cover <= 0.83 and all(q > 0 for q in qs)
+    assert (new_lo <= center).all() and (new_hi >= center).all()
