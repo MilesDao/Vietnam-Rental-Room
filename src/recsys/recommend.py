@@ -23,7 +23,7 @@ WEIGHTS = {"price": 0.30, "value": 0.25, "distance": 0.25, "amenity": 0.20}
 SHOW = ["listing_id", "platform", "title", "district", "ward", "price_vnd", "area_est", "area_imputed",
         "estimated_total_living_cost", "market_value_tier", "nearest_university",
         "distance_to_nearest_university_km", "distance_to_nearest_metro_km",
-        "distance_to_target_km", "fair_price", "value_pct", "days_old",
+        "distance_to_target_km", "fair_price", "fair_lo", "fair_hi", "value_pct", "days_old",
         "amenities_list", "listing_url", "score", "s_price", "s_value", "s_dist", "s_amenity",
         "q_not_sublet", "q_has_address", "q_district_ok", "q_any_gender"]
 

@@ -11,12 +11,15 @@ other rows are predicted by a model fit on all training rows.
 - Area model: replaces the house-type x price-quintile median only if its CV error is clearly lower (the 95%
   cluster-bootstrap interval of the MAE difference lies below zero). It uses the
   price, so its area_est is for display/scoring only and is NOT an input of the fair-price model.
-- Fair-price model: uses the stated area (missing when unknown), fair_price, value_pct = (price / fair_price - 1) * 100 (negative = cheaper than similar
-  rooms), and market_value_tier at +-15 %. This replaces the branch's Ridge residual, which was missing for
-  37 % of rows and stale for the rows whose location was repaired.
+- Fair-price model: gradient-boosted trees on the tabular features (stated area, missing when unknown) plus 64 SVD
+  components of a character TF-IDF of title + description with EVERY DIGIT REMOVED (52% of titles state the rent).
+  It won the comparison in price_experiments.py (MAPE 22.6% vs 25.4% without text). Outputs fair_price,
+  value_pct = (price / fair_price - 1) * 100 (negative = cheaper than similar rooms), fair_lo / fair_hi = the 5th and
+  95th percentile of a quantile model (out-of-fold coverage ~81%), and market_value_tier: below / inside / above that band.
 """
 import argparse
 import json
+import re
 from pathlib import Path
 
 import joblib
@@ -31,13 +34,48 @@ ROOT = Path(__file__).resolve().parents[2]
 MODELS = ROOT / "data/models"
 CATS = ["house_type", "district", "platform"]
 DIST = ["distance_to_center_km", "distance_to_nearest_metro_km", "distance_to_nearest_university_km"]
-TIERS = ["Giá hời (Bargain < -15%)", "Giá hợp lý (Fair Market ±15%)", "Giá cao (Premium > +15%)"]
+TIERS = ["Giá hời (dưới khoảng thường thấy)", "Giá hợp lý (trong khoảng thường thấy)", "Giá cao (trên khoảng thường thấy)"]
+BAND = (0.05, 0.95)   # quantiles of the "usual price" band; out-of-fold coverage ~81% (price_experiments.py)
 REPORT = {}   # filled by enrich(); printed by --report and quoted in the final report
 
 
 def _model():
     return HistGradientBoostingRegressor(categorical_features="from_dtype", max_iter=400, learning_rate=0.05,
                                          l2_regularization=1.0, random_state=0)
+
+
+def text_of(d):
+    """Title + description, accent-folded, with every digit removed so the asking price cannot be read back."""
+    from src.clean.text_clean import ascii_fold
+    title = d["title"] if "title" in d else pd.Series("", index=d.index)
+    desc = d["description"] if "description" in d else pd.Series("", index=d.index)
+    return (title.fillna("") + " . " + desc.fillna("").astype(str).str[:600]).map(
+        lambda s: re.sub(r"\d", " ", ascii_fold(s) or "")).reset_index(drop=True)
+
+
+class TextBoost:
+    """_model() on the tabular features plus 64 SVD components of a character TF-IDF of the text (all fit on the
+    training rows only)."""
+
+    def fit(self, X, y, text):
+        from sklearn.decomposition import TruncatedSVD
+        from sklearn.feature_extraction.text import TfidfVectorizer
+        self.vec = TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 5), min_df=3, max_features=50_000, sublinear_tf=True)
+        tf = self.vec.fit_transform(text)
+        self.svd = TruncatedSVD(min(64, tf.shape[1] - 1), random_state=0)
+        self.m = _model().fit(self._join(X, self.svd.fit_transform(tf)), y)
+        return self
+
+    def _join(self, X, Z):
+        return pd.concat([X.reset_index(drop=True), pd.DataFrame(Z, columns=[f"svd{i}" for i in range(Z.shape[1])])], axis=1)
+
+    def predict(self, X, text):
+        return self.m.predict(self._join(X, self.svd.transform(self.vec.transform(text))))
+
+
+def _quantile_model(a):
+    return HistGradientBoostingRegressor(loss="quantile", quantile=a, categorical_features="from_dtype", max_iter=400,
+                                         learning_rate=0.05, l2_regularization=1.0, random_state=0)
 
 
 def _X(d, cols):
@@ -142,16 +180,33 @@ def add_fair_price(d, save=True):
     # it is estimated from the room's own price, which would leak that price into its fair price.
     cols = CATS + AMENITIES + DIST + ["area_m2"]
     X = _X(d, cols)
+    text = text_of(d)
     y = np.log(d.loc[train, "price_vnd"].values)
     groups = cv_groups(d[train])
+    Xt, tt = X[train].reset_index(drop=True), text[train.values].reset_index(drop=True)
     pred = pd.Series(np.nan, index=d.index)
-    pred[train] = _oof(X[train].reset_index(drop=True), y, groups)
-    full = _model().fit(X[train], y)
+    band = {a: pd.Series(np.nan, index=d.index) for a in BAND}
+    oof, oof_band = np.empty(len(y)), {a: np.empty(len(y)) for a in BAND}
+    for tr, te in _splits(len(y), groups):
+        oof[te] = TextBoost().fit(Xt.iloc[tr], y[tr], tt.iloc[tr]).predict(Xt.iloc[te], tt.iloc[te])
+        for a in BAND:
+            oof_band[a][te] = _quantile_model(a).fit(Xt.iloc[tr], y[tr]).predict(Xt.iloc[te])
+    pred[train] = oof
+    for a in BAND:
+        band[a][train] = oof_band[a]
+    full = TextBoost().fit(Xt, y, tt)
+    full_band = {a: _quantile_model(a).fit(Xt, y) for a in BAND}
     if (~train).any():
-        pred[~train] = full.predict(X[~train])
+        Xo, to = X[~train].reset_index(drop=True), text[(~train).values].reset_index(drop=True)
+        pred[~train] = full.predict(Xo, to)
+        for a in BAND:
+            band[a][~train] = full_band[a].predict(Xo)
     d["fair_price"] = np.exp(pred).round(-3)
+    d["fair_lo"] = np.exp(band[BAND[0]]).round(-3)
+    d["fair_hi"] = np.exp(band[BAND[1]]).round(-3)
     d["value_pct"] = ((d.price_vnd / d.fair_price - 1) * 100).round(1)
-    d["market_value_tier"] = pd.cut(d.value_pct, [-np.inf, -15, 15, np.inf], labels=TIERS).astype(str)
+    tier = np.where(d.price_vnd < d.fair_lo, TIERS[0], np.where(d.price_vnd > d.fair_hi, TIERS[2], TIERS[1]))
+    d["market_value_tier"] = pd.Series(tier, index=d.index).where(d.fair_price.notna(), None)
 
     price = d.loc[train, "price_vnd"].values
     ml = np.exp(pred[train].values)
@@ -164,6 +219,10 @@ def add_fair_price(d, save=True):
            "mae_group_median_vnd": round(float(np.mean(np.abs(base - price))), -3)}
     ci = cluster_ci(ape_ml * 100, ape_base * 100, groups)
     rep.update(ci95_mape_ml=ci["a"], ci95_mape_group_median=ci["b"], ci95_mape_diff=ci["diff"])
+    inside = (y >= oof_band[BAND[0]]) & (y <= oof_band[BAND[1]])
+    rep.update(model="gradient boosting + digit-free text (TF-IDF, 64 SVD components)",
+               band_quantiles=list(BAND), band_coverage_oof=round(float(inside.mean() * 100), 1),
+               band_median_width_ratio=round(float(np.median(np.exp(oof_band[BAND[1]] - oof_band[BAND[0]]))), 2))
     stated = d.loc[train, "area_m2"].notna().values
     for name, m in (("area_stated", stated), ("area_missing", ~stated)):
         rep[name] = {"n": int(m.sum()), "mape_ml": round(float(ape_ml[m].mean()) * 100, 1),
@@ -182,7 +241,7 @@ def add_fair_price(d, save=True):
     REPORT["price"] = rep
     if save:
         MODELS.mkdir(parents=True, exist_ok=True)
-        joblib.dump({"model": full, "columns": cols}, MODELS / "price_model.joblib")
+        joblib.dump({"model": full, "band": full_band, "columns": cols}, MODELS / "price_model.joblib")
     return d
 
 

@@ -162,3 +162,16 @@ def test_ml_ranker_switch(tmp_path, monkeypatch):
 def test_wilson_interval_matches_known_values():
     from src.recsys.report_numbers import wilson
     assert wilson(25, 25) == [86.7, 100.0] and wilson(0, 8) == [0.0, 32.4] and wilson(24, 25) == [80.5, 99.3]
+
+
+def test_per_search_handles_several_searches_per_session():
+    rng = np.random.default_rng(3)
+    rows = []
+    for s in range(3):
+        for q in ("qa", "qb"):          # two searches in one session
+            for i in range(12):
+                rows.append({"session": f"s{s}", "query": q, "listing_id": f"{q}{i}", "label": int(rng.random() > 0.4),
+                             "price_vnd": 3e6, **{p: rng.random() for p in feedback.PARTS},
+                             **{k: 1.0 for k in ltr.QUALITY}})
+    per = ltr.per_search(pd.DataFrame(rows))
+    assert per.search.is_unique and len(per) == 6 and per.random.notna().all()

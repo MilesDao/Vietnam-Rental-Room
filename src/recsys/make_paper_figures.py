@@ -153,7 +153,7 @@ def fig_price(d, err):
     for k, (name, m) in enumerate(sets):
         ci = pm.cluster_ci(ml[m], base[m], groups[m])
         for off, vals, lo_hi, col, lab in [(-0.19, base[m], ci["b"], C["light"], "Median of room type × district"),
-                                          (0.19, ml[m], ci["a"], C["blue"], "Gradient-boosted model")]:
+                                          (0.19, ml[m], ci["a"], C["blue"], "Gradient boosting + text")]:
             v = vals.mean()
             ax[0].bar(k + off, v, width=0.36, color=col, edgecolor=C["ink"], linewidth=0.4, label=lab if k == 0 else None)
             ax[0].errorbar(k + off, v, yerr=[[v - lo_hi[0]], [lo_hi[1] - v]], color=C["ink"], lw=0.7, capsize=2)
@@ -387,6 +387,142 @@ def fig_eval(nums):
     save(fig, "fig_eval.pdf")
 
 
+MODEL_ORDER_LABEL = {"Median of room type × district": "Median of type × district (baseline)"}
+
+
+def fig_models(nums):
+    """Model comparison (price_experiments): MAPE with 95% intervals, and the share of rooms within ±25%."""
+    m = {k: v for k, v in nums["price_experiments"]["models"].items() if v["mape"] < 200}   # drop diverged fits, if any
+    names = sorted(m, key=lambda k: m[k]["mape"], reverse=True)
+    best = nums["price_experiments"]["best_model"]
+    ys = np.arange(len(names))
+    fig, ax = plt.subplots(1, 2, figsize=(TEXT_W_IN, 0.24 * len(names) + 0.9), sharey=True,
+                           gridspec_kw={"width_ratios": [1.5, 1], "wspace": 0.08})
+    for y, k in zip(ys, names):
+        col = C["verm"] if k == best else (C["grey"] if k.startswith("Median") else C["blue"])
+        lo, hi = m[k]["ci95_mape"]
+        ax[0].plot([lo, hi], [y, y], color=col, lw=1.2, solid_capstyle="butt")
+        ax[0].plot(m[k]["mape"], y, "o", color=col, ms=3.4)
+        ax[0].text(hi + 0.4, y, f"{m[k]['mape']:.1f}", va="center", fontsize=6.5)
+        ax[1].barh(y, m[k]["within_25"], color=col, height=0.6)
+        ax[1].text(m[k]["within_25"] + 1, y, f"{m[k]['within_25']:.0f}", va="center", fontsize=6.5)
+    ax[0].set_yticks(ys, [MODEL_ORDER_LABEL.get(k, k) for k in names])
+    ax[0].set_xlabel("Mean absolute percentage error (%), 95% interval")
+    ax[0].set_title("(a) Error (lower is better)")
+    ax[1].set_xlim(0, 100)
+    ax[1].set_xlabel("Rooms within ±25% of the asking rent (%)")
+    ax[1].set_title("(b) Share of close estimates")
+    for a in ax:
+        a.grid(axis="x")
+        a.tick_params(axis="y", length=0)
+    save(fig, "fig_models.pdf")
+
+
+def fig_explain(nums):
+    pe = nums["price_experiments"]
+    imp, abl, pdp = pe["permutation_importance"], pe["ablation"], pe["partial_dependence"]
+    groups = sorted(imp, key=lambda g: imp[g]["mean_increase_mape"])
+    fig, ax = plt.subplots(1, 3, figsize=(TEXT_W_IN, 2.1), gridspec_kw={"width_ratios": [1.25, 1, 1], "wspace": 0.45})
+    ys = np.arange(len(groups))
+    ax[0].barh(ys - 0.18, [imp[g]["mean_increase_mape"] for g in groups], height=0.34, color=C["blue"],
+               xerr=[imp[g]["sd"] for g in groups], error_kw={"lw": 0.6, "capsize": 1.5}, label="Permuted")
+    ax[0].barh(ys + 0.18, [abl[g]["diff_vs_ref"] for g in groups], height=0.34, color=C["orange"], label="Removed and refitted")
+    ax[0].axvline(0, color=C["ink"], lw=0.5)
+    ax[0].set_yticks(ys, groups)
+    ax[0].set_xlabel("Increase in error (points of MAPE)")
+    ax[0].set_title("(a) Importance of feature groups")
+    ax[0].legend(loc="upper center", bbox_to_anchor=(0.45, -0.3), ncol=2, fontsize=6.3)
+    ax[0].grid(axis="x")
+    ax[0].tick_params(axis="y", length=0)
+    for a, col, label, title in [(ax[1], "area_m2", "Stated area (m²)", "(b) Effect of area"),
+                                 (ax[2], "distance_to_center_km", "Distance to the centre (km)", "(c) Effect of distance")]:
+        a.plot(pdp[col]["grid"], pdp[col]["rent_m_vnd"], color=C["blue"], lw=1.2)
+        a.set_xlabel(label)
+        a.set_ylabel("Predicted rent (M VND)")
+        a.set_title(title)
+        a.grid()
+    save(fig, "fig_explain.pdf")
+
+
+def fig_generalise(nums):
+    pe = nums["price_experiments"]
+    lo = pe["leave_one_source_out"]
+    srcs = sorted(lo, key=lambda s: lo[s]["n"], reverse=True)
+    fig, ax = plt.subplots(1, 2, figsize=(TEXT_W_IN, 2.15), gridspec_kw={"width_ratios": [1.6, 1], "wspace": 0.35})
+    x = np.arange(len(srcs))
+    for off, key, col, lab in [(-0.27, "mape_in_cv", C["sky"], "Source seen in training (cross-validated)"),
+                               (0, "mape_model", C["blue"], "Source left out of training"),
+                               (0.27, "mape_baseline", C["light"], "Median baseline, source left out")]:
+        ax[0].bar(x + off, [lo[s][key] for s in srcs], width=0.26, color=col, label=lab, edgecolor=C["ink"], linewidth=0.3)
+    ax[0].set_xticks(x, [f"{NAMES[s]} ({lo[s]['n']:,})" for s in srcs], fontsize=6.2, rotation=30, ha="right",
+                     rotation_mode="anchor")
+    ax[0].set_ylabel("MAPE (%)")
+    ax[0].set_title("(a) Error on each source")
+    ax[0].legend(loc="upper left", fontsize=6.3)
+    ax[0].set_ylim(0, 90)
+    ax[0].grid(axis="y")
+    ax[0].tick_params(axis="x", length=0)
+    q = pe["quantile"]
+    nominal = [80, 90]
+    actual = [q["coverage_80"], q["coverage_90"]]
+    xs = np.arange(2)
+    ax[1].bar(xs - 0.18, nominal, width=0.34, color=C["light"], edgecolor=C["ink"], linewidth=0.3, label="Intended")
+    ax[1].bar(xs + 0.18, actual, width=0.34, color=C["blue"], label="Achieved")
+    for xx, v in zip(xs + 0.18, actual):
+        ax[1].text(xx, v + 1.5, f"{v:.0f}", ha="center", fontsize=6.5)
+    ax[1].set_xticks(xs, ["80% interval\n(10th–90th)", "90% interval\n(5th–95th)"], fontsize=6.5)
+    ax[1].set_ylim(0, 100)
+    ax[1].set_ylabel("Rooms inside the interval (%)")
+    ax[1].set_title("(b) Prediction intervals")
+    ax[1].legend(loc="lower right", fontsize=6.5)
+    ax[1].grid(axis="y")
+    ax[1].tick_params(axis="x", length=0)
+    save(fig, "fig_generalise.pdf")
+
+
+def fig_simulation(nums):
+    s = nums["simulation"]
+    fig, ax = plt.subplots(1, 2, figsize=(TEXT_W_IN, 2.15), gridspec_kw={"width_ratios": [1.3, 1], "wspace": 0.4})
+    for cond, col, lab in [("similar_users", C["blue"], "Similar users"), ("diverse_users", C["orange"], "Diverse users")]:
+        cur = s[cond]["learning_curve"]
+        v = np.array([c["votes"] for c in cur])
+        m = np.array([c["learned_minus_hand_mean"] for c in cur])
+        sd = np.array([c["learned_minus_hand_sd"] for c in cur])
+        ax[0].fill_between(v, m - sd, m + sd, color=col, alpha=0.18, lw=0)
+        ax[0].plot(v, m, "o-", color=col, ms=3, lw=1, label=lab)
+    ax[0].axhline(0, color=C["grey"], lw=0.6, ls="--")
+    ax[0].axvline(250, color=C["ink"], lw=0.5, ls=":")
+    ax[0].text(262, ax[0].get_ylim()[0] * 0.85, "250 AI votes", fontsize=6.3, rotation=90, va="bottom")
+    ax[0].set_xscale("log")
+    ax[0].set_xticks([120, 200, 400, 800, 1600], ["120", "200", "400", "800", "1,600"])
+    ax[0].xaxis.set_minor_formatter(NullFormatter())
+    ax[0].set_xlabel("Number of votes (40 votes per simulated user)")
+    ax[0].set_ylabel("Learned minus hand-set, NDCG@10")
+    ax[0].set_title("(a) Votes needed to beat the hand-set formula")
+    ax[0].legend(loc="lower right", fontsize=6.5)
+    ax[0].grid()
+    keys = ["s_price", "s_value", "s_dist", "s_amenity", "q_not_sublet"]
+    names = ["Price fit", "Value", "Closeness", "Amenities", "Not a sublet"]
+    for cond, col, mk in [("similar_users", C["blue"], "o"), ("diverse_users", C["orange"], "s")]:
+        t = [s[cond]["true_mean_preference"][k] for k in keys]
+        lw = [s[cond]["learned_weights_on_same_signals"][k] for k in keys]
+        ax[1].scatter(t, lw, color=col, marker=mk, s=16, zorder=3,
+                      label=f"{'Similar' if cond.startswith('sim') else 'Diverse'} (r = {s[cond]['weight_recovery_corr']:.2f})")
+        if cond == "similar_users":
+            for xx, yy, n in zip(t, lw, names):
+                ax[1].annotate(n, (xx, yy), xytext=(5, -2), textcoords="offset points", fontsize=5.8, va="top")
+    ax[1].plot([0, 0.4], [0, 0.4], color=C["grey"], lw=0.6, ls="--")
+    ax[1].set_xlim(0, 0.4)
+    ax[1].set_ylim(0, 0.4)
+    ax[1].set_aspect("equal")
+    ax[1].set_xlabel("True average weight")
+    ax[1].set_ylabel("Learned weight")
+    ax[1].set_title("(b) Recovery of the preferences")
+    ax[1].legend(loc="upper left", fontsize=6.2)
+    ax[1].grid()
+    save(fig, "fig_simulation.pdf")
+
+
 def main():
     style()
     OUT.mkdir(parents=True, exist_ok=True)
@@ -401,6 +537,12 @@ def main():
     fig_text()
     fig_ranker(nums)
     fig_eval(nums)
+    if "price_experiments" in nums:
+        fig_models(nums)
+        fig_explain(nums)
+        fig_generalise(nums)
+    if "simulation" in nums:
+        fig_simulation(nums)
 
 
 if __name__ == "__main__":

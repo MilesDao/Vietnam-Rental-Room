@@ -67,7 +67,7 @@ def random_baseline(v, k=10, draws=300, seed=0):
         y = g.label.to_numpy()
         nd = np.nanmean([ndcg_at(rng.random(len(y)), y, k) for _ in range(draws)])
         pr = float(y.mean())   # exact expectation of precision@5 under a random order
-        rows.append((key[0], nd, pr))
+        rows.append((f"{key[0]}|{key[1]}", nd, pr))   # a search = one session's one query
     return pd.DataFrame(rows, columns=["search", "ndcg", "p5"])
 
 
@@ -150,7 +150,7 @@ def per_search(v, k=10):
         v.iloc[te, v.columns.get_loc("learned")] = sum(w[kk] * v[p].iloc[te] for kk, p in zip(KEYS, FEATS))
     rows = []
     for key, g in v.groupby(["session", "query"]):
-        rows.append({"search": key[0], **{c: ndcg_at(g[c], g.label, k)
+        rows.append({"search": f"{key[0]}|{key[1]}", **{c: ndcg_at(g[c], g.label, k)
                                           for c in ("hand", "learned", "cheapest", "nearest", "price_dist")}})
     per = pd.DataFrame(rows).dropna()
     rnd = random_baseline(v).set_index("search").ndcg

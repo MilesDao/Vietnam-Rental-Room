@@ -484,7 +484,7 @@ def fig_feedback_eval():
     a.scatter(per.cheapest, y, s=130, color="#94a3b8", zorder=3, label="Cheapest first")
     a.scatter(per.random, y, s=70, marker="D", color="#e2b714", zorder=3, label="Random order (expected)")
     a.scatter(per.learned, y, s=140, color=TEAL, zorder=3, label="ML ranker (held-out)")
-    a.set_yticks(y, [f"search {s.replace('ai-q', '')}" for s in per.search])
+    a.set_yticks(y, [f"search {s.replace('ai-q', '')}" for s in per.search.str.split("|").str[0]])
     a.set_xlabel("NDCG@10 of that search")
     a.set_xlim(0.2, 1.05)
     a.legend(loc="upper center", bbox_to_anchor=(0.5, -0.12), ncol=3, frameon=False, fontsize=11)

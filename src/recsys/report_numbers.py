@@ -213,7 +213,10 @@ def main():
     nums["link_check"] = {k: link_check(p) for k, p in LINK_CHECKS.items()}
     nums["labelling_sheets"] = labelling_sheets(d)
     path = DOCS / "report_numbers.json"
-    path.write_text(json.dumps(nums, ensure_ascii=False, indent=1, default=str), encoding="utf-8")
+    # keep the sections other scripts own (price_experiments.py, simulate_users.py); replace only ours
+    merged = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    merged.update(nums)
+    path.write_text(json.dumps(merged, ensure_ascii=False, indent=1, default=str), encoding="utf-8")
     print(f"wrote {path}")
 
 
