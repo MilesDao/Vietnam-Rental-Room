@@ -11,3 +11,8 @@ scikit-learn>=1.5
 shapely>=2.0
 matplotlib>=3.8
 pytest>=8.0
+
+# optional: state-of-the-art boosting libraries compared in src/recsys/sota_models.py
+lightgbm
+xgboost
+catboost

@@ -33,7 +33,7 @@ from src.recsys.recommend import AMENITIES, mark_shared
 
 ROOT = Path(__file__).resolve().parents[2]
 MODELS = ROOT / "data/models"
-CATS = ["house_type", "district", "platform"]
+CATS = ["house_type", "district"]
 DIST = ["distance_to_center_km", "distance_to_nearest_metro_km", "distance_to_nearest_university_km"]
 TIERS = ["Giá hời (dưới khoảng thường thấy)", "Giá hợp lý (trong khoảng thường thấy)", "Giá cao (trên khoảng thường thấy)"]
 BAND = (0.1, 0.9)     # quantiles that set the WIDTH of the "usual price" band around the fair price (nominal 80%)

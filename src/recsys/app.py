@@ -124,7 +124,8 @@ def price_txt(v):
 
 def value_txt(row):
     """What the ML fair-price model says about this rent (src/recsys/price_model.py). "Cheaper/dearer" only outside the
-    usual band (5th-95th percentile of similar rooms; out-of-fold coverage ~81%), so small gaps are not shown as deals."""
+    usual band (centred on the fair price, 10th-90th percentile width, conformal-calibrated to 80% out-of-fold coverage),
+    so small gaps are not shown as deals."""
     v, lo, hi, p = (getattr(row, k, np.nan) for k in ("value_pct", "fair_lo", "fair_hi", "price_vnd"))
     if pd.isna(v):
         return ""

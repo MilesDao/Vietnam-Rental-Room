@@ -39,7 +39,7 @@ ROOT = Path(__file__).resolve().parents[2]
 NUMS = ROOT / "docs/report_numbers.json"
 OOF = ROOT / "data/interim/price_oof.csv"
 CATS, NUMERIC = pm.CATS, pm.AMENITIES + pm.DIST + ["area_m2"]
-GROUPS = {"Area": ["area_m2"], "Room type": ["house_type"], "District": ["district"], "Source": ["platform"],
+GROUPS = {"Area": ["area_m2"], "Room type": ["house_type"], "District": ["district"],
           "Distances": pm.DIST, "Amenities": pm.AMENITIES}
 SEED = 0
 

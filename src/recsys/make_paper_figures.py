@@ -60,9 +60,10 @@ def style():
         "savefig.bbox": "tight", "savefig.pad_inches": 0.02, "savefig.dpi": 300, "figure.dpi": 150})
 
 
-def save(fig, name):
-    fig.savefig(OUT / name)
-    plt.close(fig)
+def save(fig, name, tight=True, close=True):
+    fig.savefig(OUT / name, **({} if tight else {"bbox_inches": None}))
+    if close:
+        plt.close(fig)
     print("wrote", OUT / name)
 
 
@@ -87,36 +88,56 @@ def price_errors(d):
     return t, np.abs(t.fair_price.values - p) / p * 100, np.abs(base - p) / p * 100, groups
 
 
+def save_panels(fig, base, axes):
+    """Save the combined figure (used by the slides) and every panel on its own (used by the report, which lays the panels
+    out with clear gaps). While a panel is saved, the other panels are hidden, so nothing of a neighbour appears in it."""
+    save(fig, base + ".pdf", close=False)
+    sizes = json.loads((OUT / "panels.json").read_text()) if (OUT / "panels.json").exists() else {}
+    for letter, ax in zip("abcdef", axes):
+        for other in axes:
+            other.set_visible(other is ax)
+        fig.canvas.draw()
+        bb = ax.get_tightbbox(fig._get_renderer()).transformed(fig.dpi_scale_trans.inverted()).padded(0.03)
+        sizes[f"{base}_{letter}"] = [round(bb.width, 3), round(bb.height, 3)]
+        fig.savefig(OUT / f"{base}_{letter}.pdf", bbox_inches=bb)
+    for other in axes:
+        other.set_visible(True)
+    (OUT / "panels.json").write_text(json.dumps(sizes, indent=1))
+    plt.close(fig)
+
+
 # ---------------------------------------------------------------- figures
 def fig_eda(t, nums):
-    """Exploratory view of the modelling data (6,866 training rooms): the target and its main relationships."""
+    """Exploratory view of the modelling data (6,866 training rooms): rent distribution, rent by district, by room type and against area."""
     rent = t.price_vnd / 1e6
-    fig, ax = plt.subplots(2, 2, figsize=(TEXT_W_IN, 4.6), gridspec_kw={"hspace": 0.62, "wspace": 0.42})
-    a = ax[0, 0]                                     # (a) distribution of the target, on a log axis
-    bins = np.geomspace(0.5, 50, 45)
-    a.hist(rent, bins=bins, color=C["blue"], alpha=0.85)
+    W, H = TEXT_W_IN * 0.49, 2.3
+    logticks = ([0.5, 1, 2, 5, 10, 20, 50], ["0.5", "1", "2", "5", "10", "20", "50"])
+
+    fig, a = plt.subplots(figsize=(W, H), layout="constrained")            # rent distribution, log axis
+    a.hist(rent, bins=np.geomspace(0.5, 50, 45), color=C["blue"], alpha=0.85)
+    top = a.get_ylim()[1]
     a.axvline(rent.median(), color=C["verm"], lw=1, ls="--")
-    a.text(rent.median() * 1.08, a.get_ylim()[1] * 0.9, f"median {rent.median():.1f} M", fontsize=6.5, color=C["verm"])
+    a.text(rent.median() * 1.1, top * 0.92, f"median {rent.median():.1f} M", fontsize=6.5, color=C["verm"], va="top")
     a.set_xscale("log")
-    a.set_xticks([0.5, 1, 2, 5, 10, 20, 50], ["0.5", "1", "2", "5", "10", "20", "50"])
+    a.set_xticks(*logticks)
     a.xaxis.set_minor_formatter(NullFormatter())
-    a.set_xlabel("Asking rent (million VND per month, log scale)")
+    a.set_xlabel("Asking rent (million VND per month)")
     a.set_ylabel("Rooms")
-    sk = nums["eda"]["rent_m_vnd"]
-    a.set_title(f"(a) Rent distribution (skewness {sk['skew']:.1f}; of log {sk['skew_log']:.1f})")
     a.grid(axis="y")
-    a = ax[0, 1]                                     # (b) rent by room type
+    save(fig, "fig_eda_rent.pdf", tight=False)
+
+    fig, a = plt.subplots(figsize=(W, H), layout="constrained")            # rent by room type
     order = [k for k in TYPES if (t.house_type == k).sum() >= 20]
-    data = [rent[t.house_type == k] for k in order]
-    a.boxplot(data, vert=False, widths=0.55, showfliers=False, patch_artist=True,
+    a.boxplot([rent[t.house_type == k] for k in order], vert=False, widths=0.55, showfliers=False, patch_artist=True,
               boxprops={"facecolor": C["sky"], "linewidth": 0.6}, medianprops={"color": C["ink"], "linewidth": 1},
               whiskerprops={"linewidth": 0.6}, capprops={"linewidth": 0.6})
-    a.set_yticks(range(1, len(order) + 1), [f"{TYPES[k]} ({(t.house_type == k).sum():,})" for k in order])
+    a.set_yticks(range(1, len(order) + 1), [f"{TYPES[k]} ({(t.house_type == k).sum():,})" for k in order], fontsize=6.8)
     a.set_xlabel("Asking rent (million VND per month)")
-    a.set_title("(b) Rent by room type (whiskers: 1.5 IQR)")
     a.grid(axis="x")
     a.tick_params(axis="y", length=0)
-    a = ax[1, 0]                                     # (c) rent against stated area
+    save(fig, "fig_eda_type.pdf", tight=False)
+
+    fig, a = plt.subplots(figsize=(W, H), layout="constrained")            # rent against stated area
     m = t.area_m2.notna()
     a.scatter(t.area_m2[m], rent[m], s=1.5, color=C["blue"], alpha=0.25, lw=0, rasterized=True)
     a.set_xscale("log")
@@ -124,14 +145,17 @@ def fig_eda(t, nums):
     a.set_xlim(8, 200)
     a.set_ylim(0.4, 60)
     a.set_xticks([10, 20, 50, 100, 200], ["10", "20", "50", "100", "200"])
-    a.set_yticks([0.5, 1, 2, 5, 10, 20, 50], ["0.5", "1", "2", "5", "10", "20", "50"])
+    a.set_yticks(*logticks)
     for axis in (a.xaxis, a.yaxis):
         axis.set_minor_formatter(NullFormatter())
-    a.set_xlabel("Stated area (m², log scale)")
-    a.set_ylabel("Rent (M VND, log)")
-    a.set_title(f"(c) Rent against area (r = {nums['eda']['corr_log_rent_log_area']:.2f}, n = {int(m.sum()):,})")
+    a.set_xlabel("Stated area (m\u00b2)")
+    a.set_ylabel("Asking rent (million VND)")
+    a.text(0.04, 0.96, f"r = {nums['eda']['corr_log_rent_log_area']:.2f}, n = {int(m.sum()):,}", transform=a.transAxes,
+           fontsize=6.8, va="top")
     a.grid()
-    a = ax[1, 1]                                     # (d) median rent by district
+    save(fig, "fig_eda_area.pdf", tight=False)
+
+    fig, a = plt.subplots(figsize=(W, H), layout="constrained")            # median rent by district
     dd = nums["eda"]["median_rent_by_district_min100"]
     names = list(dd)
     ys = np.arange(len(names))
@@ -140,11 +164,10 @@ def fig_eda(t, nums):
         a.plot([lo_, hi_], [y_, y_], color=C["sky"], lw=2.2, solid_capstyle="butt")
         a.plot(dd[k]["median_m"], y_, "o", color=C["blue"], ms=3.2)
     a.set_yticks(ys, [f"{k} ({dd[k]['n']:,})" for k in names], fontsize=6.5)
-    a.set_xlabel("Asking rent (M VND): median and interquartile range")
-    a.set_title("(d) Rent by district (at least 100 rooms)")
+    a.set_xlabel("Asking rent (million VND): median, quartiles")
     a.grid(axis="x")
     a.tick_params(axis="y", length=0)
-    save(fig, "fig_eda.pdf")
+    save(fig, "fig_eda_district.pdf", tight=False)
 
 
 def fig_sources(d):
@@ -239,7 +262,7 @@ def fig_price(d, err):
     ax[1].set_xscale("log")
     ax[1].set_yscale("log")
     ax[1].set_xlim(lim)
-    ax[1].set_ylim(lim)
+    ax[1].set_ylim(lim[0], 300)  # headroom for the legend
     ticks = [0.5, 1, 2, 5, 10, 20, 50]
     for axis in (ax[1].xaxis, ax[1].yaxis):
         axis.set_major_locator(matplotlib.ticker.FixedLocator(ticks))
@@ -247,11 +270,11 @@ def fig_price(d, err):
         axis.set_minor_formatter(NullFormatter())
     ax[1].set_xlabel("Estimated fair rent (million VND per month)")
     ax[1].set_ylabel("Asking rent (million VND per month)")
-    ax[1].text(0.03, 0.95, f"n = {len(t):,}", transform=ax[1].transAxes, ha="left", va="top", fontsize=7)
-    ax[1].legend(loc="lower right", fontsize=6.5, markerscale=4)
+    ax[1].text(0.03, 0.97, f"n = {len(t):,}", transform=ax[1].transAxes, ha="left", va="top", fontsize=7)
+    ax[1].legend(loc="upper left", bbox_to_anchor=(0.0, 0.94), fontsize=6.5, markerscale=4)
     ax[1].set_title("(b) Asking against estimated fair rent")
     ax[1].set_aspect("equal")
-    save(fig, "fig_price.pdf")
+    save_panels(fig, "fig_price", [ax[0], ax[1]])
 
 
 def fig_errors(err):
@@ -278,13 +301,13 @@ def fig_errors(err):
             a.plot(v, y, "o", color=C["blue"], ms=3.2)
         a.axvline(ml.mean(), color=C["grey"], lw=0.6, ls="--")
         a.set_yticks(ys, [f"{c} ({n:,})" for c, _, _, n in rows])
-        a.invert_yaxis()
         a.set_title(title)
         a.grid(axis="x")
         a.tick_params(axis="y", length=0)
         a.set_xlim(0, 60)
-    ax[1].set_xlabel("Mean absolute percentage error (%), with 95% interval")
-    save(fig, "fig_errors.pdf")
+    for a_ in ax:
+        a_.set_xlabel("Mean error (%), 95% interval")
+    save_panels(fig, "fig_errors", [ax[0], ax[1], ax[2]])
 
 
 def fig_map(d):
@@ -348,7 +371,6 @@ def fig_text():
         a.barh(ys, vals, color=col, height=0.6)
         hbar_labels(a, ys, vals, lambda v: f"{v:.2f}", 0.01)
         a.set_yticks(ys, [label(D.iloc[j]) for j in rows], fontsize=6.5)
-        a.invert_yaxis()
         a.set_xlim(0, 1)
         a.grid(axis="x")
         a.tick_params(axis="y", length=0)
@@ -404,7 +426,7 @@ def fig_ranker(nums):
     ax[1].legend(loc="upper center", bbox_to_anchor=(0.5, -0.24), ncol=3, fontsize=6.5)
     ax[1].grid(axis="x")
     ax[1].tick_params(axis="y", length=0)
-    save(fig, "fig_ranker_learned.pdf")
+    save_panels(fig, "fig_ranker_learned", [ax[0], ax[1]])
 
 
 def fig_eval(nums):
@@ -446,7 +468,7 @@ def fig_eval(nums):
     ax[1].set_title("(b) Gain of the learned weights")
     ax[1].grid(axis="x")
     ax[1].tick_params(axis="y", length=0)
-    save(fig, "fig_eval.pdf")
+    save_panels(fig, "fig_eval", [ax[0], ax[1]])
 
 
 MODEL_ORDER_LABEL = {"Median of room type × district": "Median of type × district (baseline)"}
@@ -472,12 +494,47 @@ def fig_models(nums):
     ax[0].set_xlabel("Mean absolute percentage error (%), 95% interval")
     ax[0].set_title("(a) Error (lower is better)")
     ax[1].set_xlim(0, 100)
-    ax[1].set_xlabel("Rooms within ±25% of the asking rent (%)")
+    ax[1].set_xlabel("Within ±25% of asking rent (%)")
     ax[1].set_title("(b) Share of close estimates")
     for a in ax:
         a.grid(axis="x")
         a.tick_params(axis="y", length=0)
-    save(fig, "fig_models.pdf")
+    save_panels(fig, "fig_models", [ax[0], ax[1]])
+
+
+def fig_sota(nums):
+    """Boosting libraries (sota_models) against the final model, with and without the text: MAPE with 95% intervals, and the
+    difference from the final model with its interval."""
+    sm = nums["sota_models"]
+    ref_name = "Histogram gradient boosting + text"
+    rows = [("scikit-learn HGB + text (final)", sm["reference"][ref_name], None, "verm")]
+    for lib in ("LightGBM", "XGBoost", "CatBoost"):
+        rows.append((lib + " + text", sm[lib + " + text"], sm[lib + " + text"], "blue"))
+    for lib in ("LightGBM", "XGBoost", "CatBoost"):
+        rows.append((lib + ", no text", sm[lib], sm[lib], "grey"))
+    ys = np.arange(len(rows))[::-1]
+    fig, ax = plt.subplots(1, 2, figsize=(TEXT_W_IN, 0.24 * len(rows) + 0.9), sharey=True,
+                           gridspec_kw={"width_ratios": [1.3, 1], "wspace": 0.08})
+    for y, (name, m, d, col) in zip(ys, rows):
+        lo, hi = m["ci95_mape"]
+        ax[0].plot([lo, hi], [y, y], color=C[col], lw=1.2, solid_capstyle="butt")
+        ax[0].plot(m["mape"], y, "o", color=C[col], ms=3.4)
+        ax[0].text(hi + 0.3, y, f"{m['mape']:.1f}", va="center", fontsize=6.5)
+        if d is not None:
+            dlo, dhi = d["ci95_diff_vs_ref"]
+            ax[1].plot([dlo, dhi], [y, y], color=C[col], lw=1.2, solid_capstyle="butt")
+            ax[1].plot(d["diff_vs_ref"], y, "o", color=C[col], ms=3.4)
+            ax[1].text(dhi + 0.12, y, f"{d['diff_vs_ref']:+.2f}", va="center", fontsize=6.5)
+    ax[0].set_yticks(ys, [r[0] for r in rows])
+    ax[0].set_xlabel("Mean absolute percentage error (%), 95% interval")
+    ax[0].set_title("(a) Error (lower is better)")
+    ax[1].axvline(0, color=C["ink"], lw=0.8, ls="--")
+    ax[1].set_xlabel("Difference from the final model (points)")
+    ax[1].set_title("(b) Difference, 95% interval")
+    for a in ax:
+        a.grid(axis="x")
+        a.tick_params(axis="y", length=0)
+    save(fig, "fig_sota.pdf")
 
 
 def fig_explain(nums, d):
@@ -513,7 +570,7 @@ def fig_explain(nums, d):
         a.set_ylabel("Predicted rent (M VND)")
         a.set_title(title)
         a.grid()
-    save(fig, "fig_explain.pdf")
+    save_panels(fig, "fig_explain", [ax[0], ax[1], ax[2]])
 
 
 def fig_generalise(nums):
@@ -523,18 +580,19 @@ def fig_generalise(nums):
     srcs = sorted(lo, key=lambda s: lo[s]["n"], reverse=True)
     fig, ax = plt.subplots(1, 2, figsize=(TEXT_W_IN, 2.15), gridspec_kw={"width_ratios": [1.6, 1], "wspace": 0.35})
     x = np.arange(len(srcs))
-    for off, key, col, lab in [(-0.27, "mape_in_cv", C["sky"], "Source seen in training (cross-validated)"),
-                               (0, "mape_model", C["blue"], "Source left out of training"),
-                               (0.27, "mape_baseline", C["light"], "Median baseline, source left out")]:
+    for off, key, col, lab in [(-0.27, "mape_in_cv", C["sky"], "Seen in training (CV)"),
+                               (0, "mape_model", C["blue"], "Left out of training"),
+                               (0.27, "mape_baseline", C["light"], "Baseline, left out")]:
         ax[0].bar(x + off, [lo[s][key] for s in srcs], width=0.26, color=col, label=lab, edgecolor=C["ink"], linewidth=0.3)
     ax[0].scatter(x, [tab[s]["mape_model"] for s in srcs], marker="x", s=14, color=C["ink"], linewidths=0.8, zorder=3,
-                  label="Source left out, model without text")
+                  label="Left out, no text")
     ax[0].set_xticks(x, [f"{NAMES[s]} ({lo[s]['n']:,})" for s in srcs], fontsize=6.2, rotation=30, ha="right",
                      rotation_mode="anchor")
     ax[0].set_ylabel("MAPE (%)")
     ax[0].set_title("(a) Error on each source")
-    ax[0].legend(loc="upper left", fontsize=6.3)
-    ax[0].set_ylim(0, 90)
+    ax[0].legend(loc="upper left", fontsize=6.0, ncol=2, columnspacing=1.0, handlelength=1.4, borderaxespad=0.2)
+    ax[0].set_ylim(0, 125)
+    ax[0].set_yticks(range(0, 81, 20))
     ax[0].grid(axis="y")
     ax[0].tick_params(axis="x", length=0)
     q = pe["quantile"]
@@ -546,13 +604,14 @@ def fig_generalise(nums):
     for xx, v in zip(xs + 0.18, actual):
         ax[1].text(xx, v + 1.5, f"{v:.0f}", ha="center", fontsize=6.5)
     ax[1].set_xticks(xs, ["80% interval\n(10th–90th)", "90% interval\n(5th–95th)"], fontsize=6.5)
-    ax[1].set_ylim(0, 100)
+    ax[1].set_ylim(0, 118)
+    ax[1].set_yticks(range(0, 101, 20))
     ax[1].set_ylabel("Rooms inside the interval (%)")
     ax[1].set_title("(b) Prediction intervals")
-    ax[1].legend(loc="lower right", fontsize=6.5)
+    ax[1].legend(loc="upper left", fontsize=6.3, ncol=2, borderaxespad=0.2, columnspacing=1.0)
     ax[1].grid(axis="y")
     ax[1].tick_params(axis="x", length=0)
-    save(fig, "fig_generalise.pdf")
+    save_panels(fig, "fig_generalise", [ax[0], ax[1]])
 
 
 def fig_simulation(nums):
@@ -584,8 +643,11 @@ def fig_simulation(nums):
         ax[1].scatter(t, lw, color=col, marker=mk, s=16, zorder=3,
                       label=f"{'Similar' if cond.startswith('sim') else 'Diverse'} (r = {s[cond]['weight_recovery_corr']:.2f})")
         if cond == "similar_users":
+            off = {"Price fit": (7, -9, "left"), "Closeness": (-7, 7, "right"), "Value": (-7, 6, "right"),
+                   "Amenities": (-7, -8, "right"), "Not a sublet": (0, -11, "center")}
             for xx, yy, n in zip(t, lw, names):
-                ax[1].annotate(n, (xx, yy), xytext=(5, -2), textcoords="offset points", fontsize=5.8, va="top")
+                dx, dy, ha = off[n]
+                ax[1].annotate(n, (xx, yy), xytext=(dx, dy), textcoords="offset points", fontsize=5.8, ha=ha, va="center")
     ax[1].plot([0, 0.4], [0, 0.4], color=C["grey"], lw=0.6, ls="--")
     ax[1].set_xlim(0, 0.4)
     ax[1].set_ylim(0, 0.4)
@@ -593,9 +655,9 @@ def fig_simulation(nums):
     ax[1].set_xlabel("True average weight")
     ax[1].set_ylabel("Learned weight")
     ax[1].set_title("(b) Recovery of the preferences")
-    ax[1].legend(loc="upper left", fontsize=6.2)
+    ax[1].legend(loc="lower right", fontsize=6.2)
     ax[1].grid()
-    save(fig, "fig_simulation.pdf")
+    save_panels(fig, "fig_simulation", [ax[0], ax[1]])
 
 
 def main():
@@ -615,6 +677,8 @@ def main():
     fig_eval(nums)
     if "price_experiments" in nums:
         fig_models(nums)
+        if "sota_models" in nums:
+            fig_sota(nums)
         fig_explain(nums, err[0])
         fig_generalise(nums)
     if "simulation" in nums:
