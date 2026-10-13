@@ -96,7 +96,7 @@ This report documents the reverse engineering, network inspection, crawling meth
      - `Dịch vụ khác`: e.g. `200.000 đ/người`
    - **Full Building Amenities (Section 2):** Parsed complete amenity rosters including `Thang máy`, `Camera an ninh`, `Khóa cổng thông minh`, `Bình chữa cháy`, `Thiết bị báo cháy`, `Thang bộ thoát hiểm`, `Khu để xe`, `Khu giặt chung`.
    - **Policies (Section 6):** Extracted pet policies (`Nuôi thú cưng` vs `Không nuôi thú cưng`), lease term requirements, and deposit conditions.
-   - **Contact Integration:** Linked PhongTot's official hotline and Zalo booking channel (`0888022821`).
+   - **Contact Integration:** Linked PhongTot's official hotline and Zalo booking channel.
 3. **Implementation Scripts:** [`crawl_phongtot.py`](file:///home/totallynotminh/Documents/FunDS/crawl_phongtot.py) & [`build_unified_dataset.py`](file:///home/totallynotminh/Documents/FunDS/build_unified_dataset.py)
 
 ---
