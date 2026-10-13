@@ -111,8 +111,26 @@ How to use / check the Streamlit app (layout follows listing sites such as yourh
    poster names; contact the landlord through the original ad. Facebook posts show no photos.
 7. Headless smoke test: `python -c "from streamlit.testing.v1 import AppTest; at=AppTest.from_file('src/recsys/app.py', default_timeout=240).run(); print(at.exception)"` should print an empty list. Set `RECSYS_FEEDBACK_DB=<temp file>` when testing so test clicks do not end up in the real feedback.
 
-Known limits: no real feedback has been collected yet, so the weights are still hand-set and the only quality ratings
-are AI-assigned; many coordinates are ward-level. See `docs/RECSYS_FINAL_REPORT.md`.
+### Price model and report
+
+The fair-price model is gradient boosting on listing features plus digit-free TF-IDF/SVD text features
+(cross-validated MAPE 22.6% vs 34.3% for the type × district median baseline). The paper is `docs/latex/report.tex`;
+every number in it comes from code and is stored in `docs/report_numbers.json`:
+
+```bash
+python -m src.recsys.price_experiments         # model comparison, leaks, ablations, intervals
+python -m src.recsys.sota_models               # XGBoost / LightGBM / CatBoost on the same folds
+python -m src.recsys.geo_validation            # coordinate checks: district-polygon agreement, shared coordinates, centre sensitivity
+cd docs/latex && xelatex report.tex            # run twice for references
+```
+
+Distances to the centre are straight-line (haversine, R = 6371 km) from Hoàn Kiếm Lake, 21.0285 N 105.8542 E
+(`HANOI_CENTER` in `src/recsys/ref_points.py`).
+
+Known limits: no real user feedback has been collected yet, so the deployed ranking weights come from AI-labelled votes
+(the hand-set weights are as good) and the only quality ratings are AI-assigned. About half of the rooms sit on a ward- or
+district-level coordinate rather than the building, so coordinates are reliable at district level only (93% agree with
+the GADM district polygons; see report §3.3). See `docs/RECSYS_FINAL_REPORT.md`.
 
 ## Data & PII
 
